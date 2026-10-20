@@ -1,3 +1,5 @@
+# Kinder Spa API blueprint. Existing paid PostgreSQL is managed separately.
+# This blueprint does not create another database.
 services:
   - type: web
     name: kinder-spa-api
@@ -17,7 +19,3 @@ services:
         value: admin
       - key: ADMIN_PASSWORD
         sync: false
-
-databases:
-  - name: kinder-spa-db
-    plan: free
