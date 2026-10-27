@@ -10,3 +10,5 @@ build/
 uploads/
 *.keystore
 *.jks
+.wheels/
+accounting-evidence/

@@ -26,3 +26,11 @@ No real customer data, secrets, photos of children, or database passwords in Git
 
 ## Status
 Scaffold / work in progress. Not yet a production-ready app.
+
+## Reviewable backend component
+
+`backend/` contains an isolated PostgreSQL18 accounting prototype and44 automated
+checks for subscriptions, one-time QR redemption, pool cancellations and audited
+restoration with a superadmin outbox. See [backend/README.md](backend/README.md)
+for verified scope and remaining gates. No Android client, HTTP authentication,
+Telegram delivery or production deployment is claimed by this increment.
