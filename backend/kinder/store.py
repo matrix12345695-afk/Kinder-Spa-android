@@ -35,8 +35,9 @@ def token_hash(token):
 
 
 class Store:
-    def __init__(self, connection, *, clock=None):
+    def __init__(self, connection, *, clock=None, authorize=None):
         self.conn = connection
+        self.authorize = authorize
         # Clock injection is for synthetic tests; production must use PostgreSQL time.
         self.clock = clock
 
@@ -53,6 +54,8 @@ class Store:
         row = self.conn.execute('SELECT role,enabled FROM accounts WHERE id=%s FOR SHARE', (actor,)).fetchone()
         if not row or row[1] is not True or (staff and row[0] not in ('admin', 'superadmin')):
             raise Rejected('access_denied')
+        if self.authorize is not None:
+            self.authorize(self.conn, actor)
         return row[0]
 
     def _audit(self, actor, operation, entity, at, details):

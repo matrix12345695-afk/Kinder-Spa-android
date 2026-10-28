@@ -1,7 +1,8 @@
 # Kinder Spa: transactional accounting prototype
 
-The first executable backend component, for isolated review. No deployment, public
-API, Android client, password authentication or Telegram sender is included.
+Transactional backend components, for isolated review. The authenticated WSGI API
+and admin-issued password/session module are documented in [API.md](API.md).
+No deployment, Android client, admin web UI or Telegram sender is included.
 Never use a client-supplied `actor_id` as authentication. A future server adapter
 must derive this ID from a verified session and use a least-privilege database role.
 Only an operator can bootstrap staff; `create_client` cannot create a staff role.
@@ -61,7 +62,7 @@ The binary wheel also bundles libpq and cryptographic libraries with their own
 notices; retain those notices for redistribution. No dependency hooks/source
 builds or arbitrary GitHub agent code are installed by this prototype.
 
-The44 checks include actual PostgreSQL transactions, concurrent last-session
+The original44 business checks include actual PostgreSQL transactions, concurrent last-session
 booking, concurrent QR consumption, concurrent restoration, rollback after
 outbox/audit errors, exact cancellation boundary and timezone conversion. The
 gate requires zero skips and writes `accounting-evidence/report.json` with the
@@ -70,10 +71,10 @@ passwords, connection strings, customer data or database dump.
 
 ## Remaining before a pilot
 
-Authenticated admin-issued login/password flows, authorization at the HTTP
-boundary, brute-force controls, guardian/child modeling, RU/UZ UI, Android
-application, scheduling capacity, real Telegram outbox delivery and retry,
-backups/restore, production migrations and database roles remain unfinished.
+The83-check draft includes admin-issued passwords, authenticated HTTP accounting
+and persisted login throttling. Guardian/child modeling, RU/UZ UI, Android
+application, admin web UI, scheduling capacity, real Telegram outbox delivery and retry,
+backups/restore, production HTTPS gateway/migrations and database roles remain unfinished.
 No production service, paid resource, automatic public deployment or production
 database is configured here. `schema.sql` is an explicit first-install schema;
 it refuses existing names and is not an upgrade script. Existing `render.yaml`
