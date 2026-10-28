@@ -79,7 +79,7 @@ KINDER_TEST_DATABASE_URL=postgresql://postgres:fixture-only@127.0.0.1:15439/kind
   python backend/run_browser_checks.py
 ```
 
-Both gates require zero skips:93 PostgreSQL/API/origin/asset/audit checks and24 real
+Both gates require zero skips:95 PostgreSQL/API/origin/asset/audit/expiry checks and24 real
 Chromium→WSGI→PostgreSQL tests. Business flows use real endpoints and transactions;
 only the explicitly named network-fault tests intercept/lose/delay responses.
 Tests deny external page requests/WebSockets. Six desktop/mobile RU/UZ screenshots
@@ -100,5 +100,5 @@ gateway time/resource/concurrency caps, staff bootstrap/credential procedures,
 least-privilege roles, migrations, backup/recovery, actual notification sender and
 owner approval remain deployment gates. No service/DSN, real credentials/customer
 data, Render/billing/production writes or UAC runtime scope are configured here.
-Android, client/child profiles, photos, camera QR scanning, capacity, full business
+Production Android binding/distribution, client/child profiles, photos, camera QR scanning, capacity, full business
 reports and the production-ready admin experience remain unfinished.

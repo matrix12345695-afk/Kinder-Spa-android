@@ -57,3 +57,8 @@ Only a passing acceptance artifact establishes those device results. Screenshot
 artifacts never contain a QR token. Backend checks separately require95 API/core
 and24 staff-panel browser scenarios. Android8 device coverage and accessibility
 audits on physical devices remain future work; minSdk is not such evidence.
+
+CI retains the synthetic apps only until screenshots are pulled, using AGP's
+documented `android.injected.androidTest.leaveApksInstalledAfterRun` option;
+the disposable emulator is then terminated. Default post-test uninstallation
+would otherwise remove their private external test-output directories.

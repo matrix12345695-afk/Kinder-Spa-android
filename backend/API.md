@@ -113,10 +113,13 @@ identification, and a reset genuinely blocked by an admitted session transaction
 Only synthetic fixtures are used; no real service/data/secret/Telegram access.
 
 ADMIN.md adds the RU/UZ staff panel with10 boundary tests and24 real browser tests.
-Remaining: Android/RU-UZ client, full operational admin features, capacity scheduling, sender for
+The separate [native RU/UZ review client](../android/README.md) adds its own
+emulator/APK gate; this backend report does not certify Android. Remaining:
+production Android binding/distribution, full operational admin features, capacity scheduling, sender for
 the durable superadmin outbox, real backup/restore, controlled schema migrations,
 production transport/roles/secret setup and exact owner-approved publication.
-# Native relative expiry fields
+
+## Native relative expiry fields
 
 Login responses additionally include `expires_in_seconds` (at most28800).
 QR issuance responses additionally include `valid_for_seconds` (at most120,

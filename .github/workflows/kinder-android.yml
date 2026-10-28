@@ -72,7 +72,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -memory 2048
           script: |
-            python android/gradle.py :app:connectedFixtureDebugAndroidTest :app:connectedReviewDebugAndroidTest
+            python android/gradle.py :app:connectedFixtureDebugAndroidTest :app:connectedReviewDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
             mkdir -p android-evidence/screenshots
             adb pull /sdcard/Android/data/uz.kinderspa.client.fixture/files/native-evidence/. android-evidence/screenshots/
             python ci/verify_android.py

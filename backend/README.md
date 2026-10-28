@@ -3,7 +3,8 @@
 Transactional backend components, for isolated review. The authenticated WSGI API
 and admin-issued password/session module are documented in [API.md](API.md).
 The opt-in RU/UZ staff panel is documented in [ADMIN.md](ADMIN.md).
-No deployment, Android client or Telegram sender is included.
+No deployment or Telegram sender is included. The separate [native Android
+review client](../android/README.md) has its own device acceptance gate.
 Never use a client-supplied `actor_id` as authentication. A future server adapter
 must derive this ID from a verified session and use a least-privilege database role.
 Only an operator can bootstrap staff; `create_client` cannot create a staff role.
@@ -72,9 +73,9 @@ passwords, connection strings, customer data or database dump.
 
 ## Remaining before a pilot
 
-The93-check backend draft and24-check browser gate include admin-issued passwords, authenticated HTTP accounting
-and persisted login throttling. Guardian/child modeling, RU/UZ UI, Android
-application, full admin workflows, scheduling capacity, real Telegram outbox delivery and retry,
+The95-check backend draft and24-check browser gate include admin-issued passwords, authenticated HTTP accounting,
+RU/UZ staff UI and persisted login throttling. Guardian/child modeling, production
+Android binding/distribution, full admin workflows, scheduling capacity, real Telegram outbox delivery and retry,
 backups/restore, production HTTPS gateway/migrations and database roles remain unfinished.
 No production service, paid resource, automatic public deployment or production
 database is configured here. `schema.sql` is an explicit first-install schema;
