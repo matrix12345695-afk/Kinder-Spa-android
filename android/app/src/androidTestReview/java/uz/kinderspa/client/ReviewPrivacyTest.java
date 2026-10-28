@@ -15,5 +15,5 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class ReviewPrivacyTest {
-    @Test public void realReviewApkHasNoCleartextOrConfiguredServer(){try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)){assertFalse(BuildConfig.TEST_FIXTURE);assertEquals("https://example.invalid",BuildConfig.API_ORIGIN);scenario.onActivity(activity->assertTrue((activity.getWindow().getAttributes().flags&WindowManager.LayoutParams.FLAG_SECURE)!=0));onView(withId(R.id.sign_in)).check(matches(not(isEnabled())));assertFalse(android.security.NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted());}}
+    @Test public void realReviewApkHasNoCleartextOrConfiguredServer()throws Exception{try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)){DeviceReady.focus(scenario);assertFalse(BuildConfig.TEST_FIXTURE);assertEquals("https://example.invalid",BuildConfig.API_ORIGIN);scenario.onActivity(activity->assertTrue((activity.getWindow().getAttributes().flags&WindowManager.LayoutParams.FLAG_SECURE)!=0));onView(withId(R.id.sign_in)).check(matches(not(isEnabled())));assertFalse(android.security.NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted());}}
 }

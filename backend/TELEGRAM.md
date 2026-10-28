@@ -81,7 +81,9 @@ audit, worker proposal, secret-entry path and remaining deployment gates.
 
 The new uninstalled `deploy/render-telegram.yaml` describes a dedicated Render
 Background Worker in Frankfurt, one instance, manual deploys and hash-locked
-Python dependencies. It creates **paid compute** if applied, even when bot live
+Python dependencies. It initially runs metadata-only inspection standby, not
+Telegram polling, and needs no bot credential at creation. It creates **paid compute**
+if applied, even when bot live
 mode is disabled. Owner cost approval is required before creating it. It neither
 creates nor changes PostgreSQL. Persistent offsets, jobs and receipts belong in
 the existing dedicated Kinder PostgreSQL, never an ephemeral local filesystem.
@@ -116,7 +118,7 @@ the existing dedicated Kinder PostgreSQL, never an ephemeral local filesystem.
    retention, alerts, physical devices and the exact production release.
 
 Both hash-lock files are required for tests. `python backend/run_checks.py`
-requires205 real PostgreSQL/backend checks, including70 Telegram,8 Render worker,26 API gateway and6 private-TLS guard cases, without
+requires207 real PostgreSQL/backend checks, including70 Telegram,9 Render worker,27 API gateway and6 private-TLS guard cases, without
 skips. Browser acceptance remains24 checks and Android16 JVM +11 device checks.
 Wire fixtures use actual loopback HTTP/multipart photos, native QR decoding and
 real PostgreSQL with synthetic credentials. They do not prove live Telegram

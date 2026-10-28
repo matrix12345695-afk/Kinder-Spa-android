@@ -33,7 +33,7 @@ public class NativeFlowTest {
     private ActivityScenario<MainActivity> scenario;
     private static final String PASSWORD="synthetic-fixture-password-1";
     private MainActivity activity;
-    @Before public void start(){var target=InstrumentationRegistry.getInstrumentation().getTargetContext();((KinderApp)target.getApplicationContext()).session.clear();target.getSharedPreferences("settings",0).edit().putString("language","ru").commit();scenario=ActivityScenario.launch(MainActivity.class);scenario.onActivity(a->activity=a);}
+    @Before public void start()throws Exception{var target=InstrumentationRegistry.getInstrumentation().getTargetContext();((KinderApp)target.getApplicationContext()).session.clear();target.getSharedPreferences("settings",0).edit().putString("language","ru").commit();scenario=ActivityScenario.launch(MainActivity.class);scenario.onActivity(a->activity=a);DeviceReady.focus(scenario);}
     @After public void finish(){if(scenario!=null)scenario.close();}
     private androidx.test.espresso.ViewInteraction qrView(int id){return onView(withId(id)).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog());}
     private void waitId(int id){long end=SystemClock.elapsedRealtime()+20000;AssertionError failure=null;do{try{(id==R.id.qr_image?qrView(id):onView(withId(id))).check(matches(isDisplayed()));return;}catch(AssertionError|androidx.test.espresso.NoMatchingViewException e){if(e instanceof AssertionError)failure=(AssertionError)e;SystemClock.sleep(100);}}while(SystemClock.elapsedRealtime()<end);if(failure!=null)throw failure;throw new AssertionError("native UI state timeout");}

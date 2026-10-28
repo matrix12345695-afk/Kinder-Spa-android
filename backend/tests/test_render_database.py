@@ -41,9 +41,10 @@ class RenderDatabaseTests(unittest.TestCase):
         conn.execute.return_value.fetchone.return_value=(False,)
         with patch('kinder.telegram_runner.psycopg.connect',return_value=conn) as connect:
             self.assertIs(connection_factory(DSN,'kinder_spa_db','kinder',render_private=True)(),conn)
-        connect.assert_called_once_with(DSN,autocommit=True,connect_timeout=3,ssl_min_protocol_version='TLSv1.2',gssencmode='disable')
+        connect.assert_called_once_with(DSN,autocommit=True,connect_timeout=3,sslmode='require',ssl_min_protocol_version='TLSv1.2',gssencmode='disable')
 
     def test_explicit_private_mode_is_only_admitted_after_render_guards(self):
         values=environment()|{'KINDER_DATABASE_URL':DSN,'KINDER_DATABASE_TRANSPORT':'render-private-tls'}
         self.assertTrue(callable(configuration(values).factory))
+        self.assertTrue(callable(configuration(values|{'KINDER_DATABASE_URL':DSN.replace(' sslmode=require','')}).factory))
         with self.assertRaises(ValueError):configuration(values|{'RENDER':'false'})

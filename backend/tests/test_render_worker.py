@@ -23,6 +23,12 @@ def environment():
 
 
 class RenderWorkerTests(unittest.TestCase):
+    def test_inspection_mode_routes_only_to_readonly_operator_without_token_access(self):
+        values={'KINDER_WORKER_MODE':'inspection'}
+        with patch.dict(os.environ,values,clear=True),patch('kinder.render_api.main',return_value=0) as inspect,\
+             patch('kinder.telegram_runner.TelegramAPI',side_effect=AssertionError('must not read bot credential')):
+            self.assertEqual(main(['--run']),0);inspect.assert_called_once_with(['--inspect-wait'])
+
     def test_valid_configuration_has_no_network_or_database_side_effect(self):
         with patch('kinder.telegram_runner.psycopg.connect',side_effect=AssertionError('no DB during validation')):
             factory,ident,token=render_configuration(environment())

@@ -41,16 +41,20 @@ loop in a free web service does not provide continuous delivery. A free webhook
 variant would require a separate inbound adapter, reliable background delivery
 design and cold-start acceptance; that variant is not implemented or promised.
 
-Blueprint live mode stays `disabled`. Its first deploy will refuse startup until
-the reviewed configuration is explicitly enabled; creation itself is not a free
-staging mechanism. `autoDeployTrigger: off` prevents source pushes from publishing
+Blueprint Telegram live mode stays `disabled`. The initial worker mode is
+inspection: one read-only metadata report, then idle for internal preflight.
+It neither polls Telegram nor serves HTTP. Paid creation is not a free staging
+mechanism. Runtime activation still requires reviewed configuration/roles. `autoDeployTrigger: off` prevents source pushes from publishing
 new revisions. `maxShutdownDelaySeconds: 180` allows bounded polling/delivery to
 finish; forced interruption may leave leased jobs for retry and duplicate an
 unconfirmed remote send. No exactly-once claim is made.
 
 ## Private configuration
 
-After the approved worker exists, open **Environment** on that Kinder service:
+Initial creation needs no bot token: Render resolves only the existing DB
+connection as KINDER_INSPECTION_DATABASE_URL, used solely in read-only inspection.
+It is never a runtime credential fallback. After schema/role review, remove this
+temporary operator binding and open **Environment** for runtime configuration:
 
 - `KINDER_TELEGRAM_BOT_TOKEN`: the separate BotFather token, entered only in
   Render's protected field. Never paste it into chat, code, logs or a URL.
@@ -94,7 +98,7 @@ unverified. Code preparation is done; deployment and real delivery are pending.
 ## API gateway increment
 
 See [GATEWAY.md](GATEWAY.md): native Render API/admin launcher, read-only role/
-schema/permission inspection,205 backend checks and a repaired root API Blueprint.
+schema/permission inspection,207 backend checks and a repaired root API Blueprint.
 No actual service or database write is performed. The connected Render tools have
 no worker/Blueprint creation operation; provider Dashboard creation and private
 secret entry remain the supported handoff. No new API credential is requested.

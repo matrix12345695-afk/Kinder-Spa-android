@@ -9,6 +9,8 @@ from dataclasses import dataclass
 import json
 import os
 import re
+import signal
+import threading
 from urllib.parse import urlsplit
 
 from .api import App, BadRequest
@@ -70,7 +72,8 @@ def configuration(environ, *, inspection=False):
     if flag not in ('disabled', 'enabled'):
         raise ValueError('explicit_telegram_links_flag_required')
     schema = environ['KINDER_DATABASE_SCHEMA']
-    factory = connection_factory(environ['KINDER_DATABASE_URL'], environ['KINDER_DATABASE_NAME'], schema,
+    dsn = environ.get('KINDER_INSPECTION_DATABASE_URL') if inspection else None
+    factory = connection_factory(dsn or environ['KINDER_DATABASE_URL'], environ['KINDER_DATABASE_NAME'], schema,
                                  render_private=database_transport(environ))
     return Configuration(factory, schema, origin, int(port), flag == 'enabled')
 
@@ -123,7 +126,7 @@ def inspect_database(factory, schema, *, telegram_links=False):
         result = {'postgres_major': major, 'schema_present': present,
                   'schema_usage': bool(schema_usage), 'runtime_role_safe': not unsafe and not owned,
                   'missing_tables': missing, 'insufficient_privileges': denied,
-                  'metadata_only': True, 'read_only': True}
+                  'metadata_only': True, 'read_only': True, 'tls_in_use': bool(conn.pgconn.ssl_in_use)}
         result['ready'] = bool(major == 18 and present and schema_usage and not unsafe and not owned and not missing and not denied)
         return result
 
@@ -161,12 +164,24 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--run', action='store_true')
     mode.add_argument('--inspect', action='store_true')
+    mode.add_argument('--inspect-wait', action='store_true')
     args = parser.parse_args(argv)
     try:
-        settings = configuration(os.environ, inspection=args.inspect)
+        settings = configuration(os.environ, inspection=args.inspect or args.inspect_wait)
         report = inspect_database(settings.factory, settings.schema, telegram_links=settings.telegram_links)
-        if args.inspect:
-            print(json.dumps(report, sort_keys=True))
+        if args.inspect or args.inspect_wait:
+            print(json.dumps(report, sort_keys=True), flush=True)
+            if args.inspect_wait:
+                # Keeps only the dedicated paid Render worker available for
+                # internal preflight/Shell. No HTTP, Telegram, model or DB writes.
+                if os.environ.get('RENDER_SERVICE_TYPE') != 'worker':
+                    raise ValueError('inspection_standby_requires_worker')
+                print('kinder_worker_mode=inspection; telegram_polling=disabled', flush=True)
+                stop = threading.Event()
+                for signum in (signal.SIGTERM, signal.SIGINT):
+                    signal.signal(signum, lambda *_: stop.set())
+                stop.wait()
+                return 0
             return 0 if report['ready'] else 1
         if not report['ready']:
             print('kinder_api_start=refused; database preflight not ready')

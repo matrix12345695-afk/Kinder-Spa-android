@@ -25,12 +25,14 @@ services:
         value: '1'
       - key: KINDER_TELEGRAM_LIVE
         value: disabled
-      - key: KINDER_TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: KINDER_TELEGRAM_BOT_ID
-        sync: false
-      - key: KINDER_DATABASE_URL
-        sync: false
+      - key: KINDER_WORKER_MODE
+        value: inspection
+      # Operator connection is usable ONLY by explicit read-only inspection.
+      # Polling reads KINDER_DATABASE_URL, never this inspection credential.
+      - key: KINDER_INSPECTION_DATABASE_URL
+        fromDatabase:
+          name: kinder-spa-db
+          property: connectionString
       - key: KINDER_DATABASE_NAME
         value: kinder_spa_db
       - key: KINDER_DATABASE_TRANSPORT

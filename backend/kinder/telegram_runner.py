@@ -58,12 +58,12 @@ def connection_factory(dsn, database, schema, *, render_private=False):
         # Explicit Render-private scope only. Render documents self-signed
         # internal TLS without verify-full support; trust the private network,
         # not an authenticated certificate name. Never generalize this scope.
-        if database!='kinder_spa_db' or parsed.get('host')!=RENDER_DATABASE_HOST or parsed.get('sslmode')!='require':
+        if database!='kinder_spa_db' or parsed.get('host')!=RENDER_DATABASE_HOST or parsed.get('sslmode','require')!='require':
             raise ValueError('pinned_render_private_database_tls_required')
     elif parsed.get('host') not in ('127.0.0.1','localhost') and not parsed.get('host','').startswith('/') and parsed.get('sslmode')!='verify-full':
         raise ValueError('verified_database_tls_required')
     def factory():
-        options={'ssl_min_protocol_version':'TLSv1.2','gssencmode':'disable'} if render_private else {}
+        options={'sslmode':'require','ssl_min_protocol_version':'TLSv1.2','gssencmode':'disable'} if render_private else {}
         conn=psycopg.connect(dsn,autocommit=True,connect_timeout=3,**options)
         try:
             if render_private and not conn.pgconn.ssl_in_use:
@@ -91,6 +91,13 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description='Render-only Kinder Telegram worker; no auto install or migrations')
     parser.add_argument('--run',action='store_true');parser.add_argument('--once',action='store_true')
     args=parser.parse_args(argv)
+    mode=os.environ.get('KINDER_WORKER_MODE','polling')
+    if mode=='inspection' and (args.run or args.once):
+        from .render_api import main as inspect_main
+        return inspect_main(['--inspect'] if args.once else ['--inspect-wait'])
+    if mode!='polling':
+        print('kinder_telegram=disabled; unknown worker mode')
+        return 2
     if not (args.run or args.once) or os.environ.get('KINDER_TELEGRAM_LIVE')!='approved':
         print('kinder_telegram=disabled; explicit reviewed configuration and release approval required')
         return 2

@@ -70,6 +70,12 @@ class ConfigurationTests(unittest.TestCase):
                                   'RENDER_EXTERNAL_URL':'','RENDER_EXTERNAL_HOSTNAME':''}
             self.assertEqual(configuration(worker,inspection=True).origin,'')
             with self.assertRaises(ValueError):configuration(worker)
+            with patch('kinder.render_api.connection_factory') as factory:
+                values=environment()|{'KINDER_INSPECTION_DATABASE_URL':'inspection-only-dsn'}
+                configuration(values,inspection=True)
+                self.assertEqual(factory.call_args.args[0],'inspection-only-dsn')
+                configuration(values)
+                self.assertEqual(factory.call_args.args[0],values['KINDER_DATABASE_URL'])
         self.assertTrue(callable(settings.factory))
 
     def test_startup_exception_does_not_disclose_provider_text_or_credentials(self):
@@ -109,6 +115,18 @@ class ConfigurationTests(unittest.TestCase):
         factory=MagicMock()
         with self.assertRaises(ValueError):inspect_database(factory,'public,kinder')
         factory.assert_not_called()
+
+    def test_worker_inspection_standby_never_starts_http_or_polls_when_not_ready(self):
+        output=StringIO();values=environment()|{'RENDER_SERVICE_TYPE':'worker','RENDER_SERVICE_NAME':'kinder-spa-telegram',
+            'RENDER_EXTERNAL_URL':'','RENDER_EXTERNAL_HOSTNAME':'','KINDER_API_LIVE':'disabled'}
+        with patch.dict(os.environ,values,clear=True),redirect_stdout(output),\
+             patch('kinder.render_api.inspect_database',return_value={'ready':False,'metadata_only':True}),\
+             patch('kinder.render_api.threading.Event') as event,patch('kinder.render_api.signal.signal') as signals,\
+             patch('kinder.gateway.Server') as server:
+            self.assertEqual(main(['--inspect-wait']),0)
+            event.return_value.wait.assert_called_once_with();self.assertEqual(signals.call_count,2)
+            server.assert_not_called()
+        self.assertIn('telegram_polling=disabled',output.getvalue())
 
 
 class DatabaseGatewayTests(Fixture):
@@ -194,6 +212,8 @@ class DatabaseGatewayTests(Fixture):
         outer=self;seen=[]
         class Guard:
             def __init__(self):self.conn=outer.runtime_factory()
+            @property
+            def pgconn(self):return self.conn.pgconn
             def __enter__(self):self.conn.__enter__();return self
             def __exit__(self,*a):return self.conn.__exit__(*a)
             def transaction(self):return self.conn.transaction()

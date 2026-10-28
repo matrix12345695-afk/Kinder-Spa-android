@@ -73,7 +73,7 @@ passwords, connection strings, customer data or database dump.
 
 ## Remaining before a pilot
 
-The205-check backend draft and24-check browser gate include admin-issued passwords, authenticated HTTP accounting,
+The207-check backend draft and24-check browser gate include admin-issued passwords, authenticated HTTP accounting,
 RU/UZ staff UI and persisted login throttling. Guardian/child modeling, production
 Android binding/distribution, full admin workflows, scheduling capacity, real Telegram outbox delivery and retry,
 backups/restore, production HTTPS gateway/migrations and database roles remain unfinished.

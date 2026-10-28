@@ -140,9 +140,31 @@ does not roll back data, grants, migrations or delivered messages.
 
 ## Verification
 
-The26 new gateway checks include actual PostgreSQL18 roles/grants/read-only transactions
+The27 new gateway checks include actual PostgreSQL18 roles/grants/read-only transactions
 and a real Gunicorn HTTP login/me/header-limit flow, with synthetic credentials.
 Six additional private-TLS scope/status checks are synthetic. Together they
-are included in the205-check backend gate;24 browser and27 native checks
+are included in the207-check backend gate;24 browser and27 native checks
 remain separate. Synthetic HTTP behind an emulated Render boundary does not
 prove actual Render TLS or deployment. Evidence reports keep both flags false.
+
+## Safe initial worker state
+
+The worker template explicitly selects KINDER_WORKER_MODE=inspection. The normal
+entrypoint delegates to --inspect-wait: a read-only metadata report once, then
+idle until SIGTERM/SIGINT even when API-role readiness is false. No HTTP listener,
+Telegram credential lookup/polling, migrations or data writes occur. Running
+Render compute means inspection standby, not an active bot.
+
+The template references the existing Kinder database's operator connection only
+as KINDER_INSPECTION_DATABASE_URL. That credential is accepted exclusively in
+explicit inspection mode; runtime API/polling never falls back to it. Provider
+connectionString secrets are resolved by Render, not copied into Git/code/chat.
+For the exact pinned private host, an omitted sslmode is overridden to require;
+prefer/allow/disable or unrelated hosts are refused. Actual negotiated SSL is
+checked. No bot token or ID is needed to create this inspection-only resource.
+
+After internal schema/role/backup review, provide a separate least-privilege
+KINDER_DATABASE_URL and the dedicated bot token/ID through Render Environment.
+Remove the temporary inspection credential before activation. Only an exact
+reviewed release may set KINDER_WORKER_MODE=polling and KINDER_TELEGRAM_LIVE=approved.
+That transition is not performed by this source change.

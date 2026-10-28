@@ -79,7 +79,7 @@ KINDER_TEST_DATABASE_URL=postgresql://postgres:fixture-only@127.0.0.1:15439/kind
   python backend/run_browser_checks.py
 ```
 
-Both gates require zero skips:205 PostgreSQL/API/Telegram/gateway checks and24 real
+Both gates require zero skips:207 PostgreSQL/API/Telegram/gateway checks and24 real
 Chromium→WSGI→PostgreSQL tests. Business flows use real endpoints and transactions;
 only the explicitly named network-fault tests intercept/lose/delay responses.
 Tests deny external page requests/WebSockets. Six desktop/mobile RU/UZ screenshots
