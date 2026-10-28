@@ -73,14 +73,15 @@ passwords, connection strings, customer data or database dump.
 
 ## Remaining before a pilot
 
-The173-check backend draft and24-check browser gate include admin-issued passwords, authenticated HTTP accounting,
+The205-check backend draft and24-check browser gate include admin-issued passwords, authenticated HTTP accounting,
 RU/UZ staff UI and persisted login throttling. Guardian/child modeling, production
 Android binding/distribution, full admin workflows, scheduling capacity, real Telegram outbox delivery and retry,
 backups/restore, production HTTPS gateway/migrations and database roles remain unfinished.
 No production service, paid resource, automatic public deployment or production
 database is configured here. `schema.sql` is an explicit first-install schema;
-it refuses existing names and is not an upgrade script. The root `render.yaml` remains an unfinished API scaffold; the separate worker
-proposal is `deploy/render-telegram.yaml`. All Kinder hosting is Render-only. A deploy requires a reviewed runnable application and the owner's
+it refuses existing names and is not an upgrade script. The root `render.yaml` now defines the native Python API/admin pilot;
+[Render gateway](GATEWAY.md) adds read-only role/schema readiness and a bounded
+Gunicorn launcher. The separate worker proposal is `deploy/render-telegram.yaml`. All Kinder hosting is Render-only. A deploy requires a reviewed runnable application and the owner's
 specific release approval.
 
 No changes to cancellation for massage/hydromassage, manual completed-visit undo,

@@ -100,9 +100,9 @@ Client accounts can then be created through authenticated admin requests.
 The default application requires trusted `wsgi.url_scheme=https` and uses only
 `REMOTE_ADDR` for IP throttling. It ignores X-Forwarded-For/Proto. A gateway must set
 scheme/address from a verified transport, without allowing spoofed forwarding headers.
-Do not expose a plain wsgiref development server. A reviewed HTTPS WSGI gateway with
-request/header/read/worker timeouts, resource/concurrency caps and no secret logging
-is a remaining deployment task. `require_https=False` exists only for isolated
+Do not expose a plain wsgiref development server. The separate [Render gateway](GATEWAY.md) supplies an explicit Render-edge
+adapter, bounded Gunicorn server and metadata-only role/schema readiness.
+Real deployment/TLS/load acceptance remains pending. `require_https=False` exists only for isolated
 loopback tests and must not be used in a real deployment.
 
 The original83 checks require real PostgreSQL18 and zero skips:44 business tests plus39

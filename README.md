@@ -29,7 +29,7 @@ Scaffold / work in progress. Not yet a production-ready app.
 
 ## Reviewable backend component
 
-`backend/` contains an isolated PostgreSQL18 accounting prototype and173 backend +24 browser automated
+`backend/` contains an isolated PostgreSQL18 accounting prototype and205 backend +24 browser automated
 checks for subscriptions, one-time QR redemption, pool cancellations and audited
 restoration with a superadmin outbox. See [backend/README.md](backend/README.md)
 for verified scope and remaining gates. [Authenticated API](backend/API.md) adds
@@ -41,6 +41,6 @@ short-lived QR codes and pool cancellation. Its review APK has no production API
 configured. Full operational admin features and production Android distribution
 remain unfinished. The [RU/UZ Telegram bot](backend/TELEGRAM.md) adds client and staff workflows,
 QR-photo checks and a durable restoration-notification sender. Its70 synthetic
-protocol/PostgreSQL checks are included in the173 backend checks. The owner reports the separate BotFather token saved in GitHub Secrets.
+protocol/PostgreSQL checks are included in the205 backend checks. The owner reports the separate BotFather token saved in GitHub Secrets.
 [All Kinder hosting is Render-only](backend/RENDER.md); Render secret binding,
 real Telegram acceptance and production deployment remain unfinished.

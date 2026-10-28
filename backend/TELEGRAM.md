@@ -102,8 +102,10 @@ the existing dedicated Kinder PostgreSQL, never an ephemeral local filesystem.
    expected bot ID and a matching dedicated token prefix. Render marker checks
    prevent accidental VPS starts; they are not cryptographic host attestation.
    There is no token-file or shared `BOT_TOKEN` fallback. The database must be
-   the dedicated `kinder_*` database with verify-full TLS for remote connections;
-   certificate/CA compatibility remains a release gate, not a claimed result.
+   the dedicated `kinder_*` database with verify-full TLS for ordinary remote connections. The explicit
+   Render-private transport instead pins the existing Kinder host/database,
+   requires TLS1.2+ and verifies negotiated SSL, trusting Render's private network
+   rather than a certificate identity. See GATEWAY.md; actual TLS is unverified.
 4. The runner verifies `getMe` ID/username and an empty webhook, without deleting
    a webhook. A database lock admits one poller. Telegram401/409 stops the loop;
    do not use Render cron, a free sleeping web service or several pollers as a
@@ -114,7 +116,7 @@ the existing dedicated Kinder PostgreSQL, never an ephemeral local filesystem.
    retention, alerts, physical devices and the exact production release.
 
 Both hash-lock files are required for tests. `python backend/run_checks.py`
-requires173 real PostgreSQL/backend checks, including70 Telegram cases and8 Render worker checks, without
+requires205 real PostgreSQL/backend checks, including70 Telegram,8 Render worker,26 API gateway and6 private-TLS guard cases, without
 skips. Browser acceptance remains24 checks and Android16 JVM +11 device checks.
 Wire fixtures use actual loopback HTTP/multipart photos, native QR decoding and
 real PostgreSQL with synthetic credentials. They do not prove live Telegram

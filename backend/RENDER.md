@@ -14,7 +14,7 @@ Confirmed workspace: **My Workspace**, matrix12345695@gmail.com,
 | --- | --- |
 | PostgreSQL | `kinder-spa-db`, ID `dpg-dbbtkol9fdbs73a7tvqg-a`, Frankfurt, PostgreSQL18, available, existing paid plan `0.1c-256mb`,1GiB. Database name `kinder_spa_db`. |
 | External DB access | Empty IP allowlist. Read-only MCP schema query was refused; no tables/data/migrations were inspected and the allowlist was not changed. |
-| API/admin hosting | No Kinder service present in the workspace service list. Root `render.yaml` is an unfinished historical API scaffold referencing a missing Dockerfile, not a deployed API. |
+| API/admin hosting | No Kinder service present in the workspace service list. Root `render.yaml` now describes the native Python API/admin pilot; its Render gateway is tested locally, not deployed. |
 | Telegram hosting | No Kinder service present. Polling code is a tested draft, not a running bot. |
 | Token | Owner reports creation and storage as GitHub Actions secret `KINDER_TELEGRAM_BOT_TOKEN`. Value, username and real Bot API response are unverified. |
 
@@ -30,9 +30,10 @@ The process reads the existing dedicated PostgreSQL using an explicitly reviewed
 runtime DSN and role. It does not run migrations or bootstrap accounts.
 
 **This is paid compute, not a free plan. Creating the worker incurs cost even
-while live mode is disabled. Do not apply the Blueprint until the owner approves
-the selected plan/cost and exact release.** Current plan/catalog references were
-read; the account's actual checkout price has not been approved.
+while live mode is disabled. The owner replied “Продолжай” to the$7/month proposal, treated as approval
+of that bounded expense. Do not apply a higher plan or a customer release
+without its separate approval.** Current plan/catalog references were
+read; the account's checkout must remain within the approved$7/month additional compute limit.
 
 The existing polling transport requires an always-on worker. Render free web
 services sleep after15minutes without inbound traffic, so placing this polling
@@ -55,7 +56,7 @@ After the approved worker exists, open **Environment** on that Kinder service:
   Render's protected field. Never paste it into chat, code, logs or a URL.
 - `KINDER_TELEGRAM_BOT_ID`: exact numeric ID, verified against `getMe` at startup.
 - `KINDER_DATABASE_URL`: reviewed least-privilege connection for the existing
-  Kinder database, with verified TLS/CA. Do not automatically reuse a database
+  Kinder database, with the explicitly scoped Render-private TLS transport described in GATEWAY.md. Do not automatically reuse a database
   owner connection or weaken certificate checking.
 - `KINDER_DATABASE_NAME=kinder_spa_db` and `KINDER_DATABASE_SCHEMA=kinder` are
   proposal values. Inspect the real existing schema before enabling them.
@@ -73,7 +74,8 @@ existing secret untouched until a concrete handoff is selected.
 
 ## Remaining release gates
 
-1. Review this source and CI, approve the worker's actual cost and exact release.
+1. Review this source and CI and approve the exact release. Keep worker compute
+   within the approved$7/month additional limit; no higher plan is authorized.
 2. Inspect Kinder DB internally from Render, snapshot/verify restore, determine
    current schema, apply reviewed additive migrations only to Kinder and use a
    least-privilege runtime role. Do not open external networking for this task.
@@ -88,3 +90,11 @@ Rollback is a previous reviewed worker release with the current compatible
 schema and no competing poller. It does not undo accounting, migrations or sent
 messages. Actual Render rollback, schema/backup restoration and delivery remain
 unverified. Code preparation is done; deployment and real delivery are pending.
+
+## API gateway increment
+
+See [GATEWAY.md](GATEWAY.md): native Render API/admin launcher, read-only role/
+schema/permission inspection,205 backend checks and a repaired root API Blueprint.
+No actual service or database write is performed. The connected Render tools have
+no worker/Blueprint creation operation; provider Dashboard creation and private
+secret entry remain the supported handoff. No new API credential is requested.

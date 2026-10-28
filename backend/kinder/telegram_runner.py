@@ -13,6 +13,16 @@ from .telegram_bot import Bot
 from .telegram_delivery import TelegramAPI,TelegramFailure,Sender,poll_once
 
 
+RENDER_DATABASE_HOST='dpg-dbbtkol9fdbs73a7tvqg-a'
+
+
+def database_transport(environ):
+    value=environ.get('KINDER_DATABASE_TRANSPORT','verified-tls')
+    if value not in ('verified-tls','render-private-tls'):
+        raise ValueError('explicit_database_transport_required')
+    return value=='render-private-tls'
+
+
 def render_configuration(environ):
     """Fail before token access off the approved Render worker.
 
@@ -29,7 +39,8 @@ def render_configuration(environ):
     if not re.fullmatch(r'[1-9][0-9]{4,18}',expected) or int(expected)>=2**63:
         raise ValueError('exact_bot_identity_required')
     # Validate the dedicated database before retrieving any bot credential.
-    factory=connection_factory(environ['KINDER_DATABASE_URL'],environ['KINDER_DATABASE_NAME'],environ['KINDER_DATABASE_SCHEMA'])
+    factory=connection_factory(environ['KINDER_DATABASE_URL'],environ['KINDER_DATABASE_NAME'],environ['KINDER_DATABASE_SCHEMA'],
+                               render_private=database_transport(environ))
     token=environ['KINDER_TELEGRAM_BOT_TOKEN']
     if (not isinstance(token,str) or not re.fullmatch(r'[1-9][0-9]{4,19}:[A-Za-z0-9_-]{30,100}',token)
             or token.split(':',1)[0]!=expected):
@@ -37,16 +48,26 @@ def render_configuration(environ):
     return factory,int(expected),token
 
 
-def connection_factory(dsn, database, schema):
+def connection_factory(dsn, database, schema, *, render_private=False):
     parsed=conninfo_to_dict(dsn)
     if (not re.fullmatch(r'kinder_[a-z0-9_]{1,40}',database) or database=='kinder_test' or parsed.get('dbname')!=database
             or any(k in parsed for k in ('service','hostaddr','options')) or not re.fullmatch(r'[a-z][a-z0-9_]{0,50}',schema)):
         raise ValueError('dedicated_reviewed_kinder_database_required')
-    if parsed.get('host') not in ('127.0.0.1','localhost') and not parsed.get('host','').startswith('/') and parsed.get('sslmode')!='verify-full':
+    if type(render_private) is not bool:raise ValueError('explicit_database_transport_required')
+    if render_private:
+        # Explicit Render-private scope only. Render documents self-signed
+        # internal TLS without verify-full support; trust the private network,
+        # not an authenticated certificate name. Never generalize this scope.
+        if database!='kinder_spa_db' or parsed.get('host')!=RENDER_DATABASE_HOST or parsed.get('sslmode')!='require':
+            raise ValueError('pinned_render_private_database_tls_required')
+    elif parsed.get('host') not in ('127.0.0.1','localhost') and not parsed.get('host','').startswith('/') and parsed.get('sslmode')!='verify-full':
         raise ValueError('verified_database_tls_required')
     def factory():
-        conn=psycopg.connect(dsn,autocommit=True,connect_timeout=5)
+        options={'ssl_min_protocol_version':'TLSv1.2','gssencmode':'disable'} if render_private else {}
+        conn=psycopg.connect(dsn,autocommit=True,connect_timeout=3,**options)
         try:
+            if render_private and not conn.pgconn.ssl_in_use:
+                raise ValueError('database_tls_not_negotiated')
             conn.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
             role=conn.execute('SELECT rolsuper FROM pg_roles WHERE rolname=current_user').fetchone()
             if not role or role[0]:raise ValueError('non_superuser_runtime_role_required')

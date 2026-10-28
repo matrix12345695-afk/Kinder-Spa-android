@@ -8,7 +8,7 @@ services:
     name: kinder-spa-telegram
     runtime: python
     repo: https://github.com/matrix12345695-afk/Kinder-Spa-android
-    branch: feature/telegram-bot
+    branch: feature/render-api-pilot
     rootDir: backend
     region: frankfurt
     plan: 0.5c-512mb
@@ -33,5 +33,7 @@ services:
         sync: false
       - key: KINDER_DATABASE_NAME
         value: kinder_spa_db
+      - key: KINDER_DATABASE_TRANSPORT
+        value: render-private-tls
       - key: KINDER_DATABASE_SCHEMA
         value: kinder
