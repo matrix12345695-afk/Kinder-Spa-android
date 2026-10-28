@@ -22,7 +22,7 @@ from kinder.api import App
 from kinder.store import Rejected,token_hash
 from kinder.telegram_bot import Bot,Unbound,peer_update,tr
 from kinder.telegram_delivery import TelegramAPI,TelegramFailure,Sender,poll_once,qr_png,decode_photo
-from kinder.telegram_runner import token_file,connection_factory,verify_identity,main
+from kinder.telegram_runner import render_configuration,connection_factory,verify_identity,main
 
 BOT_ID=123456
 TOKEN=str(BOT_ID)+':'+('x'*35)
@@ -418,18 +418,13 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(TelegramFailure(429,999999).retry_after,3600)
         self.assertEqual(TelegramFailure('invalid','invalid').code,0)
 
-    def test_secret_file_permissions_symlinks_and_protected_paths(self):
-        with tempfile.TemporaryDirectory(prefix='kinder-token-test-') as folder:
-            path=Path(folder)/'telegram.token';path.write_text(TOKEN);path.chmod(0o600);self.assertEqual(token_file(str(path)),TOKEN)
-            path.chmod(0o644)
-            with self.assertRaises(ValueError):token_file(str(path))
-            path.chmod(0o600);link=Path(folder)/'link';link.symlink_to(path)
-            with self.assertRaises(ValueError):token_file(str(link))
-        for path in ('relative.token','/home/maksim/inventory-bot/.env','/home/maksim/.ultimate-review-data/token'):
-            with self.assertRaises(ValueError):token_file(path)
+    def test_vps_launch_refused_before_any_secret_read(self):
+        class NoSecrets(dict):
+            def __getitem__(self,key):raise AssertionError('must not read secrets outside Render')
+        with self.assertRaises(ValueError):render_configuration(NoSecrets(KINDER_TELEGRAM_LIVE='approved'))
 
     def test_runner_disabled_before_any_secret_read(self):
-        with patch.dict(os.environ,{},clear=True),patch('kinder.telegram_runner.token_file',side_effect=AssertionError('must not read')):
+        with patch.dict(os.environ,{},clear=True),patch('kinder.telegram_runner.render_configuration',side_effect=AssertionError('must not read')):
             self.assertEqual(main([]),2)
 
     def test_foreign_database_or_tls_scope_rejected(self):

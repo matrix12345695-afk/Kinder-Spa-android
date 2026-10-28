@@ -12,7 +12,7 @@ os.chdir(ROOT)
 sys.path.insert(0, str(ROOT))
 suite = unittest.defaultTestLoader.discover('tests')
 result = unittest.TextTestRunner(verbosity=2).run(suite)
-passed = result.wasSuccessful() and result.testsRun == 165 and not result.skipped
+passed = result.wasSuccessful() and result.testsRun == 173 and not result.skipped
 source = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
           for p in sorted(ROOT.rglob('*')) if p.is_file() and
           p.suffix in ('.py', '.sql', '.lock', '.html', '.js', '.css', '.svg') and '__pycache__' not in p.parts}
@@ -23,7 +23,7 @@ evidence = {'schema': 'kinder-admin-boundaries-v1',
             'postgres_major': 18, 'synthetic_data_only': True, 'production_access': False,
             'http_authentication_implemented': True, 'telegram_delivery_implemented': False,
             'telegram_bot_implemented': True, 'telegram_protocol_fixture_verified': passed,
-            'real_telegram_delivery_verified': False, 'telegram_checks': 70,
+            'real_telegram_delivery_verified': False, 'telegram_checks': 70, 'render_worker_checks': 8, 'hosting_target': 'render',
             'https_deployment_verified': False, 'admin_ui_implemented': True,
             'browser_acceptance_report_required': True,
             'android_client_implemented': False, 'published': False, 'source_sha256': source}

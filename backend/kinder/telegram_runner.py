@@ -1,10 +1,8 @@
-"""Explicitly enabled standalone Kinder polling worker; no schema/token discovery."""
+"""Explicitly enabled Render-only Kinder worker; no files or schema discovery."""
 import argparse
 import os
-from pathlib import Path
 import re
 import signal
-import stat
 import threading
 
 import psycopg
@@ -15,20 +13,28 @@ from .telegram_bot import Bot
 from .telegram_delivery import TelegramAPI,TelegramFailure,Sender,poll_once
 
 
-def token_file(path):
-    candidate=Path(path)
-    if not candidate.is_absolute() or any('inventory' in p.lower() or 'ultimate' in p.lower() for p in candidate.parts):
-        raise ValueError('dedicated_kinder_token_file_required')
-    resolved=candidate.resolve(strict=True)
-    if resolved!=candidate or any('inventory' in p.lower() or 'ultimate' in p.lower() for p in resolved.parts):
-        raise ValueError('dedicated_kinder_token_file_required')
-    descriptor=os.open(candidate,os.O_RDONLY|os.O_NOFOLLOW)
-    try:
-        info=os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077 or info.st_size>1024 or info.st_nlink!=1:
-            raise ValueError('private_token_file_required')
-        return os.read(descriptor,1025).decode('ascii').strip()
-    finally:os.close(descriptor)
+def render_configuration(environ):
+    """Fail before token access off the approved Render worker.
+
+    Render's documented markers prevent accidental launches under the old VPS
+    instructions; they are deployment checks, not cryptographic attestation.
+    There is deliberately no fallback to files, BOT_TOKEN, ULTIMATE or Inventory.
+    """
+    if (environ.get('RENDER')!='true' or environ.get('RENDER_SERVICE_TYPE')!='worker'
+            or environ.get('RENDER_SERVICE_NAME')!='kinder-spa-telegram'
+            or not re.fullmatch(r'srv-[a-z0-9]{10,40}',environ.get('RENDER_SERVICE_ID',''))
+            or environ.get('KINDER_TELEGRAM_LIVE')!='approved'):
+        raise ValueError('approved_render_worker_required')
+    expected=environ.get('KINDER_TELEGRAM_BOT_ID','')
+    if not re.fullmatch(r'[1-9][0-9]{4,18}',expected) or int(expected)>=2**63:
+        raise ValueError('exact_bot_identity_required')
+    # Validate the dedicated database before retrieving any bot credential.
+    factory=connection_factory(environ['KINDER_DATABASE_URL'],environ['KINDER_DATABASE_NAME'],environ['KINDER_DATABASE_SCHEMA'])
+    token=environ['KINDER_TELEGRAM_BOT_TOKEN']
+    if (not isinstance(token,str) or not re.fullmatch(r'[1-9][0-9]{4,19}:[A-Za-z0-9_-]{30,100}',token)
+            or token.split(':',1)[0]!=expected):
+        raise ValueError('dedicated_bot_token_required')
+    return factory,int(expected),token
 
 
 def connection_factory(dsn, database, schema):
@@ -61,17 +67,15 @@ def verify_identity(api,expected):
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description='Dedicated Kinder Telegram worker; no auto install or migrations')
+    parser=argparse.ArgumentParser(description='Render-only Kinder Telegram worker; no auto install or migrations')
     parser.add_argument('--run',action='store_true');parser.add_argument('--once',action='store_true')
     args=parser.parse_args(argv)
     if not (args.run or args.once) or os.environ.get('KINDER_TELEGRAM_LIVE')!='approved':
         print('kinder_telegram=disabled; explicit reviewed configuration and release approval required')
         return 2
     try:
-        expected=int(os.environ['KINDER_TELEGRAM_BOT_ID'])
-        factory=connection_factory(os.environ['KINDER_DATABASE_URL'],os.environ['KINDER_DATABASE_NAME'],os.environ['KINDER_DATABASE_SCHEMA'])
-        # Existing Inventory/ULTIMATE token paths are denied BEFORE any file read.
-        api=TelegramAPI(token_file(os.environ['KINDER_TELEGRAM_TOKEN_FILE']))
+        factory,expected,token=render_configuration(os.environ)
+        api=TelegramAPI(token)
         username=verify_identity(api,expected)
         bot=Bot(factory,qr_reader=api.read_photo_qr)
         with factory() as singleton:

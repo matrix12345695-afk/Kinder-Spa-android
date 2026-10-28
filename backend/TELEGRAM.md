@@ -1,7 +1,8 @@
 # Kinder Spa Telegram bot — client and administrator review component
 
-Status: code draft. No real bot identity/token, live Telegram sender or production
-service is provisioned. The owner selected **clients and administrator**. This is
+Status: code draft. Owner reports a separate BotFather token stored in the
+GitHub Actions secret `KINDER_TELEGRAM_BOT_TOKEN`; its value and live identity
+have not been verified. No Kinder sender or production service is provisioned. The owner selected **clients and administrator**. This is
 a separate Kinder bot; Inventory and ULTIMATE credentials/services are excluded.
 
 ## Included flow
@@ -70,36 +71,50 @@ zxing-cpp3.1.1 (Apache-2.0). See `telegram-requirements.lock` and full packaged
 licenses in `TELEGRAM_THIRD_PARTY_NOTICES.txt`. QR rendering uses a library matrix
 and a bounded stdlib PNG encoder, with no extra encoder dependency.
 
-The **uninstalled** `deploy/` unit proposes a separate dynamic Unix user,
-read-only `/opt/kinder-spa/release`, systemd credentials, inaccessible home
-directories,512MiB/half-CPU caps and96 file descriptors. No existing service or
-Inventory directory is used, changed or restarted.
+## Hosting: Render only (owner decision, 28 October 2026)
+
+All Kinder components, including the API, admin panel, Telegram bot, database and
+secrets, belong on **Render**. No Kinder code, token, transfer key, service or
+configuration may be installed on the VPS. The former systemd unit and token-file
+instructions are removed. [RENDER.md](RENDER.md) records the live infrastructure
+audit, worker proposal, secret-entry path and remaining deployment gates.
+
+The new uninstalled `deploy/render-telegram.yaml` describes a dedicated Render
+Background Worker in Frankfurt, one instance, manual deploys and hash-locked
+Python dependencies. It creates **paid compute** if applied, even when bot live
+mode is disabled. Owner cost approval is required before creating it. It neither
+creates nor changes PostgreSQL. Persistent offsets, jobs and receipts belong in
+the existing dedicated Kinder PostgreSQL, never an ephemeral local filesystem.
 
 ## Pilot gates and remembered owner action
 
-1. Create a **separate** bot in real `@BotFather` using `/newbot`. Available tools
-   cannot create that Telegram identity. Do not send its token in chat, GitHub,
-   issue text or a command argument; provision it privately after review.
-2. Review an exact source/CI release, dedicated Kinder database/least-privilege
-   role, migrations, backup/restore and deployment/rollback. A token alone does
-   not approve publishing customer services.
-3. Privately provision `/etc/kinder-spa/telegram.env` and `telegram.token`.
-   Default live mode is **disabled**. Approved configuration must set
-   `KINDER_TELEGRAM_LIVE=approved`, exact bot ID, dedicated `kinder_*` database,
-   schema and DSN. Remote DBs require verify-full TLS. Private token-file
-   permissions/ownership are checked; Inventory/ULTIMATE paths, symlinks and
-   hardlinks are refused before read. No real configuration was read here.
+1. BotFather creation/token storage is owner-reported done. Do not request the
+   token in chat or retrieve it from GitHub logs. GitHub Secrets cannot be read
+   back or automatically imported by the available Render connector. Provision
+   `KINDER_TELEGRAM_BOT_TOKEN` directly in the eventual Kinder Render service's
+   **Environment** form; use **Save only** before the approved release.
+2. Approve an exact source/CI release and paid worker, inspect the existing
+   `kinder-spa-db` internally, review its schema and a least-privilege runtime
+   role, migrations and backup/restore. External connections are currently
+   denied by the database allowlist; do not open it for this setup.
+3. The runner defaults to disabled and requires `--run`/`--once`,
+   `KINDER_TELEGRAM_LIVE=approved`, Render's worker/service markers, the exact
+   expected bot ID and a matching dedicated token prefix. Render marker checks
+   prevent accidental VPS starts; they are not cryptographic host attestation.
+   There is no token-file or shared `BOT_TOKEN` fallback. The database must be
+   the dedicated `kinder_*` database with verify-full TLS for remote connections;
+   certificate/CA compatibility remains a release gate, not a claimed result.
 4. The runner verifies `getMe` ID/username and an empty webhook, without deleting
-   an existing webhook. A DB lock admits one poller; Telegram401/409 conflicts
-   stop with exit2 instead of fighting another process. The example service
-   is not installed or running.
-5. Bind the superadmin through the authenticated self-link. Verify a genuine
-   restoration notification and QR workflow using synthetic pilot accounts.
-   Then review public-admission/rate limits, retention, operational alerts,
-   physical devices/accessibility and the exact production release approval.
+   a webhook. A database lock admits one poller. Telegram401/409 stops the loop;
+   do not use Render cron, a free sleeping web service or several pollers as a
+   replacement for an always-on worker. The Blueprint is not applied.
+5. Bind the superadmin through the authenticated self-link after the separate
+   HTTPS API is provisioned on Render. Verify a genuine restoration notice and
+   QR workflow with synthetic pilot accounts. Then review public admission,
+   retention, alerts, physical devices and the exact production release.
 
 Both hash-lock files are required for tests. `python backend/run_checks.py`
-requires165 real PostgreSQL/backend checks, including70 Telegram cases, without
+requires173 real PostgreSQL/backend checks, including70 Telegram cases and8 Render worker checks, without
 skips. Browser acceptance remains24 checks and Android16 JVM +11 device checks.
 Wire fixtures use actual loopback HTTP/multipart photos, native QR decoding and
 real PostgreSQL with synthetic credentials. They do not prove live Telegram

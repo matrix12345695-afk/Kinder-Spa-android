@@ -1,3 +1,5 @@
+# HISTORICAL UNFINISHED API SCAFFOLD: backend/Dockerfile is not yet implemented.
+# Do not apply this file as a release. Render bot proposal: backend/deploy/render-telegram.yaml.
 # Kinder Spa API blueprint. Existing paid PostgreSQL is managed separately.
 # This blueprint does not create another database.
 services:

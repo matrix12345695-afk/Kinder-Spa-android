@@ -1,0 +1,37 @@
+# REVIEW ONLY: creates a PAID Render worker. Requires owner cost/release approval.
+# Use this custom Blueprint path, not the unfinished root API scaffold.
+# No new DB, disk, cron, web service or VPS deployment is defined.
+previews:
+  generation: 'off'
+services:
+  - type: worker
+    name: kinder-spa-telegram
+    runtime: python
+    repo: https://github.com/matrix12345695-afk/Kinder-Spa-android
+    branch: feature/telegram-bot
+    rootDir: backend
+    region: frankfurt
+    plan: 0.5c-512mb
+    numInstances: 1
+    autoDeployTrigger: 'off'
+    maxShutdownDelaySeconds: 180
+    buildCommand: >-
+      python -m pip install --require-hashes --only-binary=:all: -r requirements.lock -r telegram-requirements.lock
+    startCommand: python -m kinder.telegram_runner --run
+    envVars:
+      - key: PYTHON_VERSION
+        value: '3.12.12'
+      - key: PYTHONUNBUFFERED
+        value: '1'
+      - key: KINDER_TELEGRAM_LIVE
+        value: disabled
+      - key: KINDER_TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: KINDER_TELEGRAM_BOT_ID
+        sync: false
+      - key: KINDER_DATABASE_URL
+        sync: false
+      - key: KINDER_DATABASE_NAME
+        value: kinder_spa_db
+      - key: KINDER_DATABASE_SCHEMA
+        value: kinder
