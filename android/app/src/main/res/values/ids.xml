@@ -1,0 +1,8 @@
+<resources>
+    <item name="login" type="id"/><item name="password" type="id"/><item name="sign_in" type="id"/>
+    <item name="message" type="id"/><item name="logout" type="id"/><item name="refresh" type="id"/>
+    <item name="language_ru" type="id"/><item name="language_uz" type="id"/>
+    <item name="tab_visits" type="id"/><item name="tab_subscriptions" type="id"/><item name="tab_history" type="id"/>
+    <item name="content" type="id"/><item name="qr_image" type="id"/><item name="qr_timer" type="id"/>
+    <item name="qr_refresh" type="id"/><item name="qr_close" type="id"/>
+</resources>

@@ -1,0 +1,28 @@
+<resources>
+    <string name="tagline">Bolalar parvarishi — bitta ilovada</string>
+    <string name="welcome">Xush kelibsiz</string><string name="login_hint">Login</string><string name="password_hint">Parol</string>
+    <string name="sign_in">Kirish</string><string name="issued">Login va parolni markaz administratori beradi.</string>
+    <string name="unconfigured">Interfeysning sinov versiyasi. Ishchi server hali ulanmagan.</string>
+    <string name="visits">Mening yozuvlarim</string><string name="subscriptions">Abonementlar</string><string name="history">Tarix</string>
+    <string name="logout">Chiqish</string><string name="refresh">Yangilash</string><string name="more">Yana yuklash</string>
+    <string name="loading">Ma’lumotlar yuklanmoqda…</string><string name="empty">Hozircha yozuvlar yo‘q.</string><string name="loaded">Ro‘yxatning yuklangan qismi ko‘rsatilgan.</string>
+    <string name="pool">Basseyn</string><string name="massage">Bolalar massaji</string><string name="hydromassage">Gidromassaj</string>
+    <string name="remaining">Qoldiq: %2$d tadan %1$d</string><string name="subscription_id">Abonement №%1$d</string>
+    <string name="booking_id">Yozuv №%1$d</string><string name="reserved">Siz yozilgansiz</string><string name="consumed">Tashrif hisobga olindi</string>
+    <string name="cancelled">Qaytarib bekor qilindi</string><string name="forfeited">Seans hisobdan chiqarildi</string><string name="no_show">Kelmagan</string><string name="restored">Seans tiklandi</string>
+    <string name="show_qr">QR ko‘rsatish</string><string name="qr_title">Tashrif uchun QR</string><string name="qr_help">Kodni markaz xodimiga ko‘rsating. U faqat bir marta ishlatiladi.</string>
+    <string name="qr_accessible">Xodim uchun bir martalik QR</string><string name="qr_seconds">Kod yana %1$d soniya amal qiladi</string>
+    <string name="qr_expired">Kod muddati tugadi. QR kodni yangilang.</string><string name="qr_refresh">Yangi QR</string><string name="close">Yopish</string>
+    <string name="cancel_booking">Yozuvni bekor qilish</string><string name="cancel_title">Basseynni bekor qilasizmi?</string>
+    <string name="cancel_policy">Seans faqat oldingi kuni soat 19:00 dan oldin Toshkent vaqti bo‘yicha bekor qilinsa qaytariladi. Kech bekor qilinsa, hisobdan chiqariladi.</string>
+    <string name="confirm_cancel">Bekor qilishni tasdiqlash</string><string name="back">Orqaga</string><string name="cancel_saved">Bekor qilish saqlandi. Ma’lumotlar yangilanmoqda.</string>
+    <string name="cancel_unknown">Natija noma’lum. Qayta urinishdan oldin yozuvlarni yangilang. Takrorlash ayni so‘rovni yuboradi.</string>
+    <string name="auth_failed">Login va parolni tekshiring.</string><string name="client_only">Bu ilova mijozlar uchun. Xodimlar veb-paneldan foydalanadi.</string>
+    <string name="session_expired">Sessiya tugadi. Qayta kiring.</string><string name="rate_limited">Urinishlar ko‘p. 10 daqiqadan keyin takrorlang.</string>
+    <string name="request_failed">Tasdiq olinmadi. Internetni tekshiring va ma’lumotlarni yangilang.</string>
+    <string name="operation_rejected">Amal qabul qilinmadi. Seans vaqtini tekshiring yoki administratorga murojaat qiling.</string>
+    <string name="local_logout">Ushbu qurilmadan chiqdingiz. Server sessiyasi tugashi tasdiqlanmadi.</string>
+    <string name="tashkent">Markaz vaqti: Toshkent · Du–Shan 09:00–19:00</string>
+    <string name="privacy">Sessiya ma’lumotlari qurilmada saqlanmaydi.</string>
+    <string name="licenses">Litsenziyalar</string><string name="license_text">QR: ZXing Core 3.5.3, Apache License 2.0. Copyright ZXing authors. To‘liq bildirishnomalar ilovaga kiritilgan.</string>
+</resources>

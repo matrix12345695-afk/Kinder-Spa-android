@@ -13,3 +13,8 @@ uploads/
 .wheels/
 accounting-evidence/
 admin-evidence/
+
+# Native Android build outputs and local tool configuration
+android/.gradle/
+android/local.properties
+android-evidence/

@@ -124,7 +124,7 @@ class Auth:
             expires = now+timedelta(hours=SESSION_HOURS)
             self.conn.execute('INSERT INTO auth_sessions VALUES(%s,%s,%s,%s,%s,false)', (token_hash(token), row[0], row[3], now, expires))
             self.core._audit(row[0], 'login', row[0], now, {})
-            return {'access_token': token, 'token_type': 'Bearer', 'expires_at': expires.isoformat()}
+            return {'access_token': token, 'token_type': 'Bearer', 'expires_at': expires.isoformat(), 'expires_in_seconds': SESSION_HOURS*3600}
 
     def locked(self, token, *, actor=None, update=False):
         if self.conn.info.transaction_status != pq.TransactionStatus.INTRANS:

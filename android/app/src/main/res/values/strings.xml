@@ -1,0 +1,29 @@
+<resources>
+    <string name="app_name" translatable="false">Kinder Spa</string>
+    <string name="tagline">Забота о детях — в одном приложении</string>
+    <string name="welcome">Добро пожаловать</string><string name="login_hint">Логин</string><string name="password_hint">Пароль</string>
+    <string name="sign_in">Войти</string><string name="issued">Логин и пароль выдаёт администратор центра.</string>
+    <string name="unconfigured">Тестовая версия интерфейса. Рабочий сервер ещё не подключён.</string>
+    <string name="visits">Мои записи</string><string name="subscriptions">Абонементы</string><string name="history">История</string>
+    <string name="logout">Выйти</string><string name="refresh">Обновить</string><string name="more">Загрузить ещё</string>
+    <string name="loading">Загружаем данные…</string><string name="empty">Пока нет записей.</string><string name="loaded">Показана загруженная часть списка.</string>
+    <string name="pool">Бассейн</string><string name="massage">Детский массаж</string><string name="hydromassage">Гидромассаж</string>
+    <string name="remaining">Осталось: %1$d из %2$d</string><string name="subscription_id">Абонемент №%1$d</string>
+    <string name="booking_id">Запись №%1$d</string><string name="reserved">Вы записаны</string><string name="consumed">Посещение учтено</string>
+    <string name="cancelled">Отменено с возвратом</string><string name="forfeited">Сеанс списан</string><string name="no_show">Неявка</string><string name="restored">Сеанс восстановлен</string>
+    <string name="show_qr">Показать QR</string><string name="qr_title">QR для посещения</string><string name="qr_help">Покажите код сотруднику центра. Повторно использовать его нельзя.</string>
+    <string name="qr_accessible">Одноразовый QR для сотрудника</string><string name="qr_seconds">Код действует ещё %1$d сек.</string>
+    <string name="qr_expired">Срок кода истёк. Обновите QR.</string><string name="qr_refresh">Новый QR</string><string name="close">Закрыть</string>
+    <string name="cancel_booking">Отменить запись</string><string name="cancel_title">Отменить бассейн?</string>
+    <string name="cancel_policy">Сеанс возвращается при отмене строго до 19:00 предыдущего дня по времени Ташкента. При поздней отмене он сгорает.</string>
+    <string name="confirm_cancel">Подтвердить отмену</string><string name="back">Назад</string><string name="cancel_saved">Отмена сохранена. Обновляем данные.</string>
+    <string name="cancel_unknown">Результат пока неизвестен. Обновите записи перед повтором. Повтор использует тот же запрос.</string>
+    <string name="auth_failed">Проверьте логин и пароль.</string><string name="client_only">Это приложение для клиентов. Сотрудникам доступна веб-панель.</string>
+    <string name="session_expired">Сессия завершена. Войдите снова.</string><string name="rate_limited">Слишком много попыток. Повторите через 10 минут.</string>
+    <string name="request_failed">Не удалось получить подтверждение. Проверьте соединение и обновите данные.</string>
+    <string name="operation_rejected">Операция не принята. Проверьте время сеанса или обратитесь к администратору.</string>
+    <string name="local_logout">Вы вышли на этом устройстве. Завершение серверной сессии не подтверждено.</string>
+    <string name="tashkent">Время центра: Ташкент · Пн–сб 09:00–19:00</string>
+    <string name="privacy">Данные сессии не сохраняются на устройстве.</string>
+    <string name="licenses">Лицензии</string><string name="license_text">QR: ZXing Core 3.5.3, Apache License 2.0. Copyright ZXing authors. Полные уведомления входят в приложение.</string>
+</resources>

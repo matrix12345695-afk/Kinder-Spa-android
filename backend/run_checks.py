@@ -12,7 +12,7 @@ os.chdir(ROOT)
 sys.path.insert(0, str(ROOT))
 suite = unittest.defaultTestLoader.discover('tests')
 result = unittest.TextTestRunner(verbosity=2).run(suite)
-passed = result.wasSuccessful() and result.testsRun == 93 and not result.skipped
+passed = result.wasSuccessful() and result.testsRun == 95 and not result.skipped
 source = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
           for p in sorted(ROOT.rglob('*')) if p.is_file() and
           p.suffix in ('.py', '.sql', '.lock', '.html', '.js', '.css', '.svg') and '__pycache__' not in p.parts}

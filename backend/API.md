@@ -116,3 +116,11 @@ ADMIN.md adds the RU/UZ staff panel with10 boundary tests and24 real browser tes
 Remaining: Android/RU-UZ client, full operational admin features, capacity scheduling, sender for
 the durable superadmin outbox, real backup/restore, controlled schema migrations,
 production transport/roles/secret setup and exact owner-approved publication.
+# Native relative expiry fields
+
+Login responses additionally include `expires_in_seconds` (at most28800).
+QR issuance responses additionally include `valid_for_seconds` (at most120,
+also capped by session end). Existing absolute timestamps remain unchanged.
+Native clients subtract request round-trip time and use a monotonic clock for
+local expiry. The server still validates every session and redemption; these
+client display fields do not change authorization or single-use accounting.

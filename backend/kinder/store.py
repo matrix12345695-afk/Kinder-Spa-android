@@ -179,7 +179,7 @@ class Store:
             self.conn.execute('INSERT INTO qr_tokens(token_hash,booking_id,expires_at) VALUES(%s,%s,%s)', (token_hash(token), booking, expires))
             self._audit(actor, 'issue_qr', booking, now, {'expires_at': expires.isoformat()})
             # Raw opaque token exists only in this response; it contains no child/account data.
-            return {'token': token, 'expires_at': expires.isoformat()}
+            return {'token': token, 'expires_at': expires.isoformat(), 'valid_for_seconds': max(0, int((expires-now).total_seconds()))}
 
     def redeem(self, actor, booking, token, key):
         positive(booking)

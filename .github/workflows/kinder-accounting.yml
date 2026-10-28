@@ -42,7 +42,7 @@ jobs:
           python -m pip install --require-hashes --only-binary=:all: -r backend/browser-requirements.lock
       - name: Install fixed Chromium revision
         run: python -m playwright install --with-deps --only-shell chromium
-      - name: Run all93 accounting and admin boundary checks
+      - name: Run all95 accounting and admin boundary checks
         env:
           KINDER_TEST_DATABASE_URL: postgresql://postgres:fixture-only@127.0.0.1:15439/kinder_test
         run: python backend/run_checks.py

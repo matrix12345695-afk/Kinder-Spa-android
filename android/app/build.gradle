@@ -1,0 +1,54 @@
+plugins { id 'com.android.application' }
+
+def configuredOrigin = providers.gradleProperty('kinderApiOrigin').orElse('https://example.invalid').get()
+if (!(configuredOrigin ==~ /https:\/\/[a-z0-9.-]+(:[1-9][0-9]{0,4})?/)) throw new GradleException('Exact HTTPS API origin required')
+android {
+    namespace 'uz.kinderspa.client'
+    compileSdk 36
+    buildToolsVersion '36.0.0'
+    defaultConfig {
+        applicationId 'uz.kinderspa.client'
+        minSdk 26
+        targetSdk 36
+        versionCode 1
+        versionName '0.1.0-review'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        testInstrumentationRunnerArguments disableAnalytics: 'true'
+    }
+    buildFeatures { buildConfig true }
+    flavorDimensions += 'environment'
+    productFlavors {
+        review {
+            dimension 'environment'
+            applicationIdSuffix '.review'
+            buildConfigField 'String', 'API_ORIGIN', '"'+configuredOrigin+'"'
+            buildConfigField 'boolean', 'TEST_FIXTURE', 'false'
+        }
+        fixture {
+            dimension 'environment'
+            applicationIdSuffix '.fixture'
+            buildConfigField 'String', 'API_ORIGIN', '"http://10.0.2.2:18763"'
+            buildConfigField 'boolean', 'TEST_FIXTURE', 'true'
+        }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    buildTypes {
+        release { minifyEnabled false }
+    }
+    lint { abortOnError true; checkReleaseBuilds true }
+    testOptions { animationsDisabled true }
+    bundle { language { enableSplit = false } }
+}
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.name.toLowerCase().contains('fixturerelease') }) throw new GradleException('Fixture release build forbidden')
+    if (graph.allTasks.any { it.name.toLowerCase().contains('reviewrelease') } && configuredOrigin == 'https://example.invalid') throw new GradleException('Release needs a reviewed real API origin')
+}
+dependencies {
+    implementation 'com.google.zxing:core:3.5.3'
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test:core:1.6.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'
+}
+dependencyLocking { lockAllConfigurations() }
