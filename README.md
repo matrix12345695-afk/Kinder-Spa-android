@@ -29,9 +29,11 @@ Scaffold / work in progress. Not yet a production-ready app.
 
 ## Reviewable backend component
 
-`backend/` contains an isolated PostgreSQL18 accounting prototype and83 automated
+`backend/` contains an isolated PostgreSQL18 accounting prototype and93 backend +24 browser automated
 checks for subscriptions, one-time QR redemption, pool cancellations and audited
 restoration with a superadmin outbox. See [backend/README.md](backend/README.md)
 for verified scope and remaining gates. [Authenticated API](backend/API.md) adds
 admin-issued login/password, sessions, revocation and persisted login throttling.
-Android, admin web UI, Telegram delivery and production deployment remain unfinished.
+The [RU/UZ staff panel](backend/ADMIN.md) covers clients, subscriptions, visits and
+audited restoration in an opt-in browser scope. Android, full operational admin
+features, Telegram delivery and production deployment remain unfinished.

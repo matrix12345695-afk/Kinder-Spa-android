@@ -12,17 +12,18 @@ os.chdir(ROOT)
 sys.path.insert(0, str(ROOT))
 suite = unittest.defaultTestLoader.discover('tests')
 result = unittest.TextTestRunner(verbosity=2).run(suite)
-passed = result.wasSuccessful() and result.testsRun == 83 and not result.skipped
+passed = result.wasSuccessful() and result.testsRun == 93 and not result.skipped
 source = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
           for p in sorted(ROOT.rglob('*')) if p.is_file() and
-          p.suffix in ('.py', '.sql', '.lock') and '__pycache__' not in p.parts}
-evidence = {'schema': 'kinder-auth-api-v1',
+          p.suffix in ('.py', '.sql', '.lock', '.html', '.js', '.css', '.svg') and '__pycache__' not in p.parts}
+evidence = {'schema': 'kinder-admin-boundaries-v1',
             'revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
             'tests': result.testsRun, 'failures': len(result.failures), 'errors': len(result.errors),
             'skipped': len(result.skipped), 'status': 'passed' if passed else 'failed',
             'postgres_major': 18, 'synthetic_data_only': True, 'production_access': False,
             'http_authentication_implemented': True, 'telegram_delivery_implemented': False,
-            'https_deployment_verified': False, 'admin_ui_implemented': False,
+            'https_deployment_verified': False, 'admin_ui_implemented': True,
+            'browser_acceptance_report_required': True,
             'android_client_implemented': False, 'published': False, 'source_sha256': source}
 output = ROOT.parent/'accounting-evidence'
 output.mkdir(exist_ok=True)

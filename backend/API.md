@@ -50,6 +50,7 @@ return at most50 rows, ordered by ID; continue with `?after=<last ID>`.
 | POST /v1/login | login,password → access_token,token_type,expires_at | Public, rate-limited |
 | GET /v1/me | account_id,role | Authenticated |
 | POST /v1/logout | {} → logged_out | Authenticated |
+| GET /v1/audit | At most50 events, reasons and queued-notification flags | Admin/superadmin |
 | GET /v1/clients | client_id,login,enabled | Admin/superadmin |
 | POST /v1/clients | login,password → client_id,login | Admin/superadmin; always client role |
 | POST /v1/clients/ID/password | password → sessions_revoked | Admin/superadmin; client targets only |
@@ -75,9 +76,10 @@ CSP and referrer/frame headers; HTTPS responses set HSTS. SQL details, password/
 values and tracebacks are never returned or logged by this application. Configure
 gateway access/error logs to redact authorization, request bodies and URL arguments.
 The API returns stable generic errors, not exception text. A transient DB/lock failure
-is503; retry accounting writes with their original key. No CORS/browser Origin surface
-is enabled yet; all Origin-bearing requests are denied. This suits native Android
-bearer clients; an admin web UI will need a reviewed same-origin/CSRF design.
+is503; retry accounting writes with their original key. Browser Origin requests are denied by default. An explicitly configured exact
+HTTPS browser_origin enables the local staff panel with a matching Host and Origin
+fence, without CORS headers or cookies. Native Android bearer clients remain
+independent of this option. See ADMIN.md for the panel and retry/session rules.
 
 ## Running / upgrading
 
@@ -103,13 +105,14 @@ request/header/read/worker timeouts, resource/concurrency caps and no secret log
 is a remaining deployment task. `require_https=False` exists only for isolated
 loopback tests and must not be used in a real deployment.
 
-83 checks require real PostgreSQL18 and zero skips:44 prior business tests plus39
+The original83 checks require real PostgreSQL18 and zero skips:44 business tests plus39
 authentication/API tests. They cover the actual loopback HTTP→WSGI→PostgreSQL login,
 business routing, client isolation/role injection, replay, SQL/bad-body rejection,
 rate-limit races, credential changes during hashing, revocation after earlier HTTP
 identification, and a reset genuinely blocked by an admitted session transaction.
 Only synthetic fixtures are used; no real service/data/secret/Telegram access.
 
-Remaining: Android/RU-UZ UI, administrator web panel, capacity scheduling, sender for
+ADMIN.md adds the RU/UZ staff panel with10 boundary tests and24 real browser tests.
+Remaining: Android/RU-UZ client, full operational admin features, capacity scheduling, sender for
 the durable superadmin outbox, real backup/restore, controlled schema migrations,
 production transport/roles/secret setup and exact owner-approved publication.

@@ -8,6 +8,8 @@ from datetime import datetime
 from http import HTTPStatus
 import json
 import re
+from pathlib import Path
+from urllib.parse import urlsplit
 
 import psycopg
 from .auth import Auth, Denied, Limited
@@ -59,21 +61,50 @@ def body(environ):
 
 
 class App:
-    def __init__(self, connection_factory, *, require_https=True, clock=None):
+    def __init__(self, connection_factory, *, require_https=True, clock=None, browser_origin=None):
         self.factory = connection_factory
         self.require_https = require_https
         self.clock = clock
+        self.browser_origin = browser_origin
+        if browser_origin is not None:
+            if not isinstance(browser_origin, str):
+                raise ValueError('exact browser origin required')
+            parsed = urlsplit(browser_origin)
+            if (not isinstance(browser_origin, str) or not re.fullmatch(r'https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?', browser_origin)):
+                if not (require_https is False and re.fullmatch(r'http://127\.0\.0\.1:[1-9][0-9]{0,4}', browser_origin or '')):
+                    raise ValueError('exact browser origin required')
+            if parsed.port is not None and not 1 <= parsed.port <= 65535:
+                raise ValueError('invalid origin port')
+            self.browser_host = parsed.netloc
+
+    def asset(self, e):
+        assets = {'/admin': ('admin.html', 'text/html'), '/admin/': ('admin.html', 'text/html'),
+                  '/admin/icon.svg': ('icon.svg', 'image/svg+xml'),
+                  '/admin/app.js': ('app.js', 'text/javascript'), '/admin/styles.css': ('styles.css', 'text/css')}
+        if not self.browser_origin or e.get('PATH_INFO') not in assets:
+            return None
+        if e.get('REQUEST_METHOD') != 'GET' or e.get('QUERY_STRING') or e.get('CONTENT_LENGTH', '') not in ('', '0'):
+            raise BadRequest()
+        name, content_type = assets[e['PATH_INFO']]
+        return content_type+'; charset=utf-8', (Path(__file__).with_name('web')/name).read_bytes()
 
     def __call__(self, environ, start_response):
         status, payload, extra = 500, {'error': 'internal_error'}, []
+        content_type = 'application/json; charset=utf-8'
         try:
             if self.require_https and environ.get('wsgi.url_scheme') != 'https':
                 status, payload = 400, {'error': 'https_required'}
-            elif environ.get('HTTP_ORIGIN'):
-                # No cross-origin browser surface or cookie authentication yet.
+            elif self.browser_origin and environ.get('HTTP_HOST', '').lower() != self.browser_host:
+                status, payload = 421, {'error': 'host_not_allowed'}
+            elif environ.get('HTTP_ORIGIN') and environ['HTTP_ORIGIN'] != self.browser_origin:
                 status, payload = 403, {'error': 'origin_not_allowed'}
             else:
-                status, payload = self.dispatch(environ)
+                asset = self.asset(environ)
+                if asset:
+                    content_type, payload = asset
+                    status = 200
+                else:
+                    status, payload = self.dispatch(environ)
         except Denied:
             status, payload, extra = 401, {'error': 'authentication_failed'}, [('WWW-Authenticate', 'Bearer')]
         except Limited:
@@ -88,12 +119,14 @@ class App:
         except Exception:
             # Never expose database/SQL errors, passwords, tokens or stack traces.
             status, payload = 500, {'error': 'internal_error'}
-        raw = json.dumps(payload, ensure_ascii=False, separators=(',', ':'),
+        raw = payload if isinstance(payload, bytes) else json.dumps(payload, ensure_ascii=False, separators=(',', ':'),
                          default=lambda x: x.isoformat(), allow_nan=False).encode()
-        headers = [('Content-Type', 'application/json; charset=utf-8'), ('Content-Length', str(len(raw))),
+        policy = ("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; "
+                  "base-uri 'none'; frame-ancestors 'none'; form-action 'self'; object-src 'none'" if content_type.startswith('text/html') else "default-src 'none'")
+        headers = [('Content-Type', content_type), ('Content-Length', str(len(raw))),
                    ('Cache-Control', 'no-store'), ('Pragma', 'no-cache'),
                    ('X-Content-Type-Options', 'nosniff'), ('X-Frame-Options', 'DENY'),
-                   ('Content-Security-Policy', "default-src 'none'"), ('Referrer-Policy', 'no-referrer')]
+                   ('Content-Security-Policy', policy), ('Referrer-Policy', 'no-referrer')]
         if environ.get('wsgi.url_scheme') == 'https':
             headers.append(('Strict-Transport-Security', 'max-age=31536000'))
         start_response(str(status)+' '+HTTPStatus(status).phrase, headers+extra)
@@ -108,7 +141,7 @@ class App:
         query = e.get('QUERY_STRING', '')
         after = 0
         if query:
-            if method != 'GET' or path not in ('/v1/clients', '/v1/subscriptions', '/v1/bookings') or not re.fullmatch('after=[0-9]{1,19}', query):
+            if method != 'GET' or path not in ('/v1/clients', '/v1/subscriptions', '/v1/bookings', '/v1/audit') or not re.fullmatch('after=[0-9]{1,19}', query):
                 raise BadRequest()
             after = ident(int(query[6:]))
         data = body(e) if method == 'POST' else None
@@ -139,6 +172,13 @@ class App:
                         rows = conn.execute('''SELECT a.id,c.login,a.enabled FROM accounts a
                             JOIN credentials c ON c.account_id=a.id WHERE a.role='client' AND a.id>%s ORDER BY a.id LIMIT 50''', (after,)).fetchall()
                         return 200, {'items': [dict(zip(('client_id', 'login', 'enabled'), r)) for r in rows]}
+                    if path == '/v1/audit':
+                        if role not in ('admin', 'superadmin'):
+                            return 403, {'error': 'access_denied'}
+                        rows = conn.execute('''SELECT a.id,a.actor_id,a.operation,a.entity_id,a.at,a.details,
+                            EXISTS(SELECT 1 FROM notification_outbox o WHERE o.event_id=a.id)
+                            FROM audit_events a WHERE a.id>%s ORDER BY a.id LIMIT 50''', (after,)).fetchall()
+                        return 200, {'items': [dict(zip(('event_id','actor_id','operation','entity_id','at','details','notification_queued'), r)) for r in rows]}
                     if path == '/v1/subscriptions':
                         ids = conn.execute('''SELECT id,client_id FROM subscriptions WHERE id>%s
                             AND (%s OR client_id=%s) ORDER BY id LIMIT 50''', (after, role != 'client', actor)).fetchall()
