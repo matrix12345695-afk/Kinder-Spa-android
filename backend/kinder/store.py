@@ -182,8 +182,14 @@ class Store:
             return {'token': token, 'expires_at': expires.isoformat(), 'valid_for_seconds': max(0, int((expires-now).total_seconds()))}
 
     def redeem(self, actor, booking, token, key):
+        return self._redeem_hashed(actor, booking, token_hash(token), key)
+
+    def _redeem_hashed(self, actor, booking, hashed, key):
+        # Trusted Telegram adapter retains only the hash while awaiting a staff
+        # confirmation. No public endpoint accepts this internal representation.
         positive(booking)
-        hashed = token_hash(token)
+        if not isinstance(hashed, str) or not re.fullmatch('[0-9a-f]{64}', hashed):
+            raise Rejected('invalid_qr')
         def apply(role):
             client, row = self._booking(booking)
             now = self._now()

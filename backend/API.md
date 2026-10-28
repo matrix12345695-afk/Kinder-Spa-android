@@ -127,3 +127,7 @@ also capped by session end). Existing absolute timestamps remain unchanged.
 Native clients subtract request round-trip time and use a monotonic clock for
 local expiry. The server still validates every session and redemption; these
 client display fields do not change authorization or single-use accounting.
+
+## Optional Telegram binding
+
+With telegram_enabled=True and the explicit telegram_schema.sql migration, POST /v1/telegram/link issues a self-link and POST /v1/clients/ID/telegram-link lets staff issue a client link. Both require current bearer authentication and empty JSON objects. The feature is disabled by default. See [TELEGRAM.md](TELEGRAM.md); no password is accepted over Telegram and no API endpoint redeems an internal QR hash.

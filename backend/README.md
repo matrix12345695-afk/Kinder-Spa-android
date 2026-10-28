@@ -73,7 +73,7 @@ passwords, connection strings, customer data or database dump.
 
 ## Remaining before a pilot
 
-The95-check backend draft and24-check browser gate include admin-issued passwords, authenticated HTTP accounting,
+The165-check backend draft and24-check browser gate include admin-issued passwords, authenticated HTTP accounting,
 RU/UZ staff UI and persisted login throttling. Guardian/child modeling, production
 Android binding/distribution, full admin workflows, scheduling capacity, real Telegram outbox delivery and retry,
 backups/restore, production HTTPS gateway/migrations and database roles remain unfinished.
@@ -86,3 +86,5 @@ specific release approval.
 No changes to cancellation for massage/hydromassage, manual completed-visit undo,
 subscription expiry/freezing, pricing, billing or capacity are assumed. Those
 business policies need a separate design before such endpoints are exposed.
+
+See [TELEGRAM.md](TELEGRAM.md) for the separate client/staff Telegram draft and its70 synthetic protocol checks. A real BotFather identity/token, live delivery and production approval remain open.

@@ -1,0 +1,38 @@
+# Review template only. No service is installed or started by this repository.
+[Unit]
+Description=Dedicated Kinder Spa Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+WorkingDirectory=/opt/kinder-spa/release/backend
+ExecStart=/opt/kinder-spa/release/.venv/bin/python -m kinder.telegram_runner --run
+EnvironmentFile=/etc/kinder-spa/telegram.env
+LoadCredential=telegram-token:/etc/kinder-spa/telegram.token
+Environment=KINDER_TELEGRAM_TOKEN_FILE=%d/telegram-token
+StateDirectory=kinder-telegram
+UMask=0077
+Restart=on-failure
+RestartPreventExitStatus=2
+RestartSec=30
+TimeoutStopSec=30
+MemoryMax=512M
+CPUQuota=50%
+TasksMax=32
+LimitNOFILE=96
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

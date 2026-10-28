@@ -61,11 +61,14 @@ def body(environ):
 
 
 class App:
-    def __init__(self, connection_factory, *, require_https=True, clock=None, browser_origin=None):
+    def __init__(self, connection_factory, *, require_https=True, clock=None, browser_origin=None, telegram_enabled=False):
         self.factory = connection_factory
         self.require_https = require_https
         self.clock = clock
         self.browser_origin = browser_origin
+        if type(telegram_enabled) is not bool:
+            raise ValueError('explicit telegram feature flag required')
+        self.telegram_enabled = telegram_enabled
         if browser_origin is not None:
             if not isinstance(browser_origin, str):
                 raise ValueError('exact browser origin required')
@@ -198,6 +201,15 @@ class App:
                 fields(data, '')
                 auth.logout(token)
                 return 200, {'logged_out': True}
+            if self.telegram_enabled and path == '/v1/telegram/link':
+                fields(data, '')
+                from .telegram_bot import Bot
+                return 201, Bot(self.factory, clock=self.clock).issue_link(token)
+            link = re.fullmatch(r'/v1/clients/([1-9][0-9]{0,18})/telegram-link', path)
+            if self.telegram_enabled and link:
+                fields(data, '')
+                from .telegram_bot import Bot
+                return 201, Bot(self.factory, clock=self.clock).issue_link(token, ident(int(link[1])))
             if path == '/v1/clients':
                 fields(data, 'login password')
                 if role not in ('admin', 'superadmin'):

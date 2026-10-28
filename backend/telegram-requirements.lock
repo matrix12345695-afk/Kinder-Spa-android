@@ -1,0 +1,4 @@
+# CPython3.12 Linux x86_64; BSD-3-Clause / MIT-CMU / Apache-2.0.
+pillow==13.0.0 --hash=sha256:42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca
+qrcode==8.2 --hash=sha256:16e64e0716c14960108e85d853062c9e8bba5ca8252c0b4d0231b9df4060ff4f
+zxing-cpp==3.1.1 --hash=sha256:9cf67341949946307d086b302cefd453fb47bc6d6ddc7d088839e9481982757b

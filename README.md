@@ -29,7 +29,7 @@ Scaffold / work in progress. Not yet a production-ready app.
 
 ## Reviewable backend component
 
-`backend/` contains an isolated PostgreSQL18 accounting prototype and95 backend +24 browser automated
+`backend/` contains an isolated PostgreSQL18 accounting prototype and165 backend +24 browser automated
 checks for subscriptions, one-time QR redemption, pool cancellations and audited
 restoration with a superadmin outbox. See [backend/README.md](backend/README.md)
 for verified scope and remaining gates. [Authenticated API](backend/API.md) adds
@@ -38,5 +38,9 @@ The [RU/UZ staff panel](backend/ADMIN.md) covers clients, subscriptions, visits 
 audited restoration in an opt-in browser scope. The first [native Android review
 client](android/README.md) implements RU/UZ login, own subscriptions and visits,
 short-lived QR codes and pool cancellation. Its review APK has no production API
-configured. Full operational admin features, production Android distribution,
-Telegram business-event delivery and production deployment remain unfinished.
+configured. Full operational admin features and production Android distribution
+remain unfinished. The [RU/UZ Telegram bot](backend/TELEGRAM.md) adds client and staff workflows,
+QR-photo checks and a durable restoration-notification sender. Its70 synthetic
+protocol/PostgreSQL checks are included in the165 backend checks. A separate
+BotFather identity/token, real Telegram acceptance and production deployment
+remain unfinished.
