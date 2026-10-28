@@ -72,6 +72,11 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -memory 2048
           script: |
+            adb shell input keyevent KEYCODE_WAKEUP
+            adb shell wm dismiss-keyguard
+            adb shell input keyevent KEYCODE_MENU
+            adb shell svc power stayon true
+            adb shell settings put system screen_off_timeout 1800000
             python android/gradle.py :app:connectedFixtureDebugAndroidTest :app:connectedReviewDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
             mkdir -p android-evidence/screenshots
             adb pull /sdcard/Android/data/uz.kinderspa.client.fixture/files/native-evidence/. android-evidence/screenshots/
