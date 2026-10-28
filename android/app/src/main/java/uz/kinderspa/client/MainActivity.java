@@ -96,7 +96,7 @@ public final class MainActivity extends Activity {
         content.addView(text(getString(R.string.privacy),12,MUTED,false));licenses();
     }
     private void renderSignedIn(){
-        LinearLayout nav=new LinearLayout(this);for(String name:new String[]{"visits","subscriptions","history"}){int label=name.equals("visits")?R.string.visits:name.equals("subscriptions")?R.string.subscriptions:R.string.history;int id=name.equals("visits")?R.id.tab_visits:name.equals("subscriptions")?R.id.tab_subscriptions:R.id.tab_history;Button b=button(getString(label),id,()->{tab=name;showRecords();refresh(false);});nav.addView(b,new LinearLayout.LayoutParams(0,dp(55),1));}root.addView(nav,root.getChildCount()-1);
+        LinearLayout nav=new LinearLayout(this);for(String name:new String[]{"visits","subscriptions","history"}){int label=name.equals("visits")?R.string.visits:name.equals("subscriptions")?R.string.subscriptions:R.string.history;int id=name.equals("visits")?R.id.tab_visits:name.equals("subscriptions")?R.id.tab_subscriptions:R.id.tab_history;Button b=button(getString(label),id,()->{tab=name;showRecords();refresh(false);});b.setMinHeight(dp(64));nav.addView(b,new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.MATCH_PARENT,1));}root.addView(nav,root.getChildCount()-1);
         LinearLayout controls=new LinearLayout(this);controls.addView(button(getString(R.string.refresh),R.id.refresh,()->refresh(false)),new LinearLayout.LayoutParams(0,dp(50),1));controls.addView(button(getString(R.string.logout),R.id.logout,this::logout),new LinearLayout.LayoutParams(0,dp(50),1));root.addView(controls);
         showRecords();
     }
