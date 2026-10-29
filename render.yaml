@@ -1,37 +1,38 @@
-# Kinder Render API/admin pilot. No database, disk or paid compute is created.
-# Bot worker is separate: backend/deploy/render-telegram.yaml ($7/month proposal).
-# This is a reviewable release definition, not an instruction to publish.
+# Deployment-only Render inspection entrypoint. Application source is unchanged from c5aa4dc9.
+# Creates only the approved $7/month inspection worker; no Telegram polling or new database.
 previews:
   generation: 'off'
 services:
-  - type: web
-    name: kinder-spa-api
-    runtime: python
-    repo: https://github.com/matrix12345695-afk/Kinder-Spa-android
-    branch: feature/render-api-pilot
-    rootDir: backend
-    region: frankfurt
-    plan: free
-    numInstances: 1
-    autoDeployTrigger: 'off'
-    healthCheckPath: /health
-    buildCommand: >-
-      python -m pip install --require-hashes --only-binary=:all: -r requirements.lock -r gateway-requirements.lock
-    startCommand: python -m kinder.render_api --run
-    envVars:
-      - key: PYTHON_VERSION
-        value: '3.12.12'
-      - key: PYTHONUNBUFFERED
-        value: '1'
-      - key: KINDER_API_LIVE
-        value: disabled
-      - key: KINDER_API_TELEGRAM_LINKS
-        value: disabled
-      - key: KINDER_DATABASE_URL
-        sync: false
-      - key: KINDER_DATABASE_NAME
-        value: kinder_spa_db
-      - key: KINDER_DATABASE_TRANSPORT
-        value: render-private-tls
-      - key: KINDER_DATABASE_SCHEMA
-        value: kinder
+- type: worker
+  name: kinder-spa-telegram
+  runtime: python
+  repo: https://github.com/matrix12345695-afk/Kinder-Spa-android
+  branch: kinder-render-inspection-20261029
+  rootDir: backend
+  region: frankfurt
+  plan: 0.5c-512mb
+  numInstances: 1
+  autoDeployTrigger: 'off'
+  maxShutdownDelaySeconds: 180
+  buildCommand: 'python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
+    -r telegram-requirements.lock'
+  startCommand: python -m kinder.telegram_runner --run
+  envVars:
+  - key: PYTHON_VERSION
+    value: 3.12.12
+  - key: PYTHONUNBUFFERED
+    value: '1'
+  - key: KINDER_TELEGRAM_LIVE
+    value: disabled
+  - key: KINDER_WORKER_MODE
+    value: inspection
+  - key: KINDER_INSPECTION_DATABASE_URL
+    fromDatabase:
+      name: kinder-spa-db
+      property: connectionString
+  - key: KINDER_DATABASE_NAME
+    value: kinder_spa_db
+  - key: KINDER_DATABASE_TRANSPORT
+    value: render-private-tls
+  - key: KINDER_DATABASE_SCHEMA
+    value: kinder
