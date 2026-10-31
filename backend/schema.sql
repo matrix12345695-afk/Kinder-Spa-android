@@ -67,3 +67,10 @@ CREATE TABLE notification_outbox (
     kind text NOT NULL CHECK (kind = 'session_restored'),
     created_at timestamptz NOT NULL
 );
+
+-- The Telegram sender claims rows with FOR UPDATE, which needs UPDATE privilege.
+-- Block actual queue-row modification by that runtime role; delivery state lives
+-- in telegram_notification_batches and telegram_jobs instead.
+CREATE TRIGGER notification_outbox_no_update
+BEFORE UPDATE OR DELETE ON notification_outbox
+FOR EACH ROW EXECUTE FUNCTION immutable_audit();
