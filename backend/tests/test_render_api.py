@@ -167,6 +167,22 @@ class DatabaseGatewayTests(Fixture):
         report=self.probe();self.assertTrue(report['ready']);self.assertTrue(report['read_only'])
         self.assertEqual(before,[self.count(t) for t in ('accounts','auth_sessions','audit_events')])
 
+    def test_ready_runtime_can_take_subscription_row_lock(self):
+        # Store._subscription uses SELECT ... FOR UPDATE even though subscription
+        # values themselves are never updated. PostgreSQL requires UPDATE grant.
+        self.assertTrue(self.probe()['ready'])
+        with self.runtime_factory() as conn, conn.transaction():
+            conn.execute("SELECT client_id FROM subscriptions LIMIT 1 FOR UPDATE")
+
+    def test_subscription_lock_privilege_is_required_by_preflight(self):
+        self.conn.execute(sql.SQL('REVOKE UPDATE ON subscriptions FROM {}').format(sql.Identifier(self.runtime_role)))
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('subscriptions:UPDATE', report['insufficient_privileges'])
+        with self.runtime_factory() as conn, conn.transaction():
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                conn.execute("SELECT client_id FROM subscriptions LIMIT 1 FOR UPDATE")
+
     def test_absent_table_is_not_ready(self):
         self.conn.execute('ALTER TABLE auth_sessions RENAME TO old_sessions')
         self.assertIn('auth_sessions',self.probe()['missing_tables']);self.assertFalse(self.probe()['ready'])
