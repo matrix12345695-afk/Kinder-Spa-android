@@ -49,6 +49,16 @@ def main():
                 WHERE n.nspname=%s AND c.relname='notification_outbox'
                     AND NOT t.tgisinternal""", (schema,)).fetchall()
             assert [t[0] for t in outbox_triggers] == ['notification_outbox_no_update'], outbox_triggers
+            guards = dict(conn.execute("""SELECT c.relname, t.tgname FROM pg_trigger t
+                JOIN pg_class c ON c.oid=t.tgrelid
+                JOIN pg_namespace n ON n.oid=c.relnamespace
+                WHERE n.nspname=%s AND NOT t.tgisinternal AND
+                c.relname IN ('accounts','subscriptions','credentials','auth_sessions')""",
+                (schema,)).fetchall())
+            assert guards == {'accounts':'accounts_id_immutable',
+                              'subscriptions':'subscriptions_id_immutable',
+                              'credentials':'credentials_account_immutable',
+                              'auth_sessions':'sessions_token_immutable'}, guards
             indexes = {r[0] for r in conn.execute("""SELECT indexname FROM pg_indexes
                 WHERE schemaname=%s""", (schema,))}
             assert {'qr_booking', 'sessions_by_account', 'telegram_one_account',
