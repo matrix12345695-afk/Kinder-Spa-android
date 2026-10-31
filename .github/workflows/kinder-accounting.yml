@@ -46,7 +46,7 @@ jobs:
         env:
           KINDER_TEST_DATABASE_URL: postgresql://postgres:fixture-only@127.0.0.1:15439/kinder_test
         run: python backend/verify_migrations.py
-      - name: Run all209 accounting, Telegram and Render gateway checks
+      - name: Run all212 accounting, Telegram and Render gateway checks
         env:
           KINDER_TEST_DATABASE_URL: postgresql://postgres:fixture-only@127.0.0.1:15439/kinder_test
         run: python backend/run_checks.py
