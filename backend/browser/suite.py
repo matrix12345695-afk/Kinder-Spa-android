@@ -243,7 +243,7 @@ class BrowserTests(Fixture):
           ]});
           window.__cameraPending(stream);
         }""")
-        expect.poll(lambda: self.page.evaluate('window.__cameraStopped')).to_be(1)
+        self.page.wait_for_function('window.__cameraStopped === 1')
         self.assertTrue(self.page.evaluate(
             'document.getElementById("qr-scan-video").srcObject === null'))
 
