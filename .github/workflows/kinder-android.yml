@@ -67,14 +67,20 @@ jobs:
         run: |
           # Android's upstream SDK occasionally serves a broken emulator ZIP.
           # Fail the job rather than weakening device coverage or using a mock.
+          sdkmanager_bin="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if test ! -x "$sdkmanager_bin"; then
+            echo "::error::Android SDK command-line tools are not available"
+            exit 1
+          fi
           ready=0
           for attempt in 1 2 3; do
-            if sdkmanager --install emulator --channel=0 > /tmp/kinder-emulator-install.log 2>&1 \
+            if "$sdkmanager_bin" --install emulator --channel=0 > /tmp/kinder-emulator-install.log 2>&1 \
                 && "$ANDROID_HOME/emulator/emulator" -version > /dev/null 2>&1; then
               ready=1
               break
             fi
             echo "Android SDK emulator install attempt ${attempt}/3 failed"
+            tail -n 4 /tmp/kinder-emulator-install.log || true
             rm -rf "$ANDROID_HOME/.temp"
             sleep 5
           done
