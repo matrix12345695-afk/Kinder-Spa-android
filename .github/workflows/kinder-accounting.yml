@@ -50,7 +50,7 @@ jobs:
         env:
           KINDER_TEST_DATABASE_URL: postgresql://postgres:fixture-only@127.0.0.1:15439/kinder_test
         run: python backend/rehearse_backup_restore.py
-      - name: Run all216 accounting, Telegram and Render gateway checks
+      - name: Run all220 accounting, Telegram and Render gateway checks
         env:
           KINDER_TEST_DATABASE_URL: postgresql://postgres:fixture-only@127.0.0.1:15439/kinder_test
         run: python backend/run_checks.py
