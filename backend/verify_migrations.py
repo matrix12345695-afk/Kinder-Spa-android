@@ -16,12 +16,18 @@ telegram_notification_batches telegram_jobs telegram_qr_cleanup""".split())
 def main():
     dsn = os.environ["KINDER_TEST_DATABASE_URL"]
     p = conninfo_to_dict(dsn)
-    if p.get("dbname") != "kinder_test" or p.get("host") not in ("127.0.0.1", "localhost") or p.get("port") != "15439":
+    if (p.get("dbname") != "kinder_test"
+            or p.get("host") not in ("127.0.0.1", "localhost")
+            or p.get("port") != "15439"
+            or any(k in p for k in ("hostaddr", "service", "options", "passfile"))):
+
         raise RuntimeError("refusing non-disposable or remote database")
     schema = "kinder_migrate_" + uuid4().hex[:12]
-    with psycopg.connect(dsn, autocommit=True) as conn:
+    with psycopg.connect(dsn, autocommit=True, connect_timeout=3) as conn:
+        created = False
         try:
             conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+            created = True
             with conn.transaction():
                 conn.execute(sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(schema)))
                 for name in ("schema.sql", "auth_schema.sql", "telegram_schema.sql"):
@@ -32,6 +38,15 @@ def main():
             assert names == EXPECTED, (names - EXPECTED, EXPECTED - names)
             runtime = conn.execute(sql.SQL("SELECT singleton,next_offset FROM {}.telegram_runtime").format(sql.Identifier(schema))).fetchone()
             assert runtime == (1, 0), runtime
+            triggers = conn.execute("""SELECT tgname FROM pg_trigger t
+                JOIN pg_class c ON c.oid=t.tgrelid
+                JOIN pg_namespace n ON n.oid=c.relnamespace
+                WHERE n.nspname=%s AND c.relname='audit_events' AND NOT t.tgisinternal""", (schema,)).fetchall()
+            assert [t[0] for t in triggers] == ['audit_no_update'], triggers
+            indexes = {r[0] for r in conn.execute("""SELECT indexname FROM pg_indexes
+                WHERE schemaname=%s""", (schema,))}
+            assert {'qr_booking', 'sessions_by_account', 'telegram_one_account',
+                    'telegram_one_peer', 'telegram_ready'} <= indexes, indexes
             with conn.transaction():
                 conn.execute(sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(schema)))
                 account = conn.execute("INSERT INTO accounts(role) VALUES('client') RETURNING id").fetchone()[0]
@@ -53,9 +68,11 @@ def main():
                 pass
             else:
                 raise AssertionError("duplicate first-install unexpectedly accepted")
-            print("PASS: 19 tables, singleton, package checks and repeated-install rejection")
+            print("PASS: 19 tables, audit trigger, indexes, singleton, quota checks, repeated-install rejection")
         finally:
-            conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+            # Never delete a schema if CREATE SCHEMA itself failed, even on a UUID collision.
+            if created:
+                conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 if __name__ == "__main__":
     main()
