@@ -192,6 +192,40 @@ class DatabaseGatewayTests(Fixture):
         self.conn.execute('CREATE VIEW auth_sessions AS SELECT * FROM old_sessions')
         self.assertIn('auth_sessions',self.probe()['missing_tables'])
 
+    def test_audit_trigger_removed_cannot_pass_api_readiness(self):
+        self.conn.execute('DROP TRIGGER audit_no_update ON audit_events')
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('audit_events:audit_no_update', report['missing_safety_objects'])
+        self.assertEqual(self.request('GET', '/health')[:2], (503, {'error':'not_ready'}))
+
+    def test_disabled_outbox_trigger_cannot_pass_api_readiness(self):
+        self.conn.execute('ALTER TABLE notification_outbox DISABLE TRIGGER notification_outbox_no_update')
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('notification_outbox:notification_outbox_no_update',
+                      report['missing_safety_objects'])
+
+    def test_identity_guard_and_critical_index_are_required(self):
+        self.conn.execute('ALTER TABLE credentials DISABLE TRIGGER credentials_account_immutable')
+        self.conn.execute('DROP INDEX sessions_by_account')
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('credentials:credentials_account_immutable', report['missing_safety_objects'])
+        self.assertIn('auth_sessions:sessions_by_account', report['missing_safety_objects'])
+
+    def test_telegram_unique_binding_indexes_required_before_enabling_links(self):
+        self.conn.execute((Path(__file__).parents[1]/'telegram_schema.sql').read_text())
+        self.conn.execute(sql.SQL('GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}').format(
+            sql.Identifier(self.schema), sql.Identifier(self.runtime_role)))
+        self.conn.execute(sql.SQL('GRANT INSERT,UPDATE ON telegram_link_codes TO {}').format(
+            sql.Identifier(self.runtime_role)))
+        self.assertTrue(self.probe(telegram_links=True)['ready'])
+        self.conn.execute('DROP INDEX telegram_one_peer')
+        report = self.probe(telegram_links=True)
+        self.assertFalse(report['ready'])
+        self.assertIn('telegram_bindings:telegram_one_peer', report['missing_safety_objects'])
+
     def test_database_superuser_cannot_be_a_runtime_role(self):
         self.assertFalse(inspect_database(self.factory,self.schema)['runtime_role_safe'])
 
