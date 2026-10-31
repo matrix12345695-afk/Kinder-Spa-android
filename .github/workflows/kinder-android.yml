@@ -63,6 +63,53 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kinder-kvm.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Install emulator with bounded retries and verify executable
+        run: |
+          # Android's upstream SDK occasionally serves a broken emulator ZIP.
+          # Fail the job rather than weakening device coverage or using a mock.
+          sdkmanager_bin="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if test ! -x "$sdkmanager_bin"; then
+            echo "::error::Android SDK command-line tools are not available"
+            exit 1
+          fi
+          ready=0
+          for attempt in 1 2 3; do
+            if "$sdkmanager_bin" --install emulator --channel=0 > /tmp/kinder-emulator-install.log 2>&1 \
+                && test -x "$ANDROID_HOME/emulator/emulator"; then
+              ready=1
+              break
+            fi
+            echo "Android SDK emulator install attempt ${attempt}/3 failed"
+            tail -n 4 /tmp/kinder-emulator-install.log || true
+            rm -rf "$ANDROID_HOME/.temp"
+            sleep 5
+          done
+          if test "$ready" -ne 1; then
+            echo "::error::Emulator unavailable after three installs; device checks not executed"
+            exit 1
+          fi
+          echo "Android Emulator executable verified"
+      - name: Install Android 35 default x86_64 image with bounded retries
+        run: |
+          sdkmanager_bin="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          image_file="$ANDROID_HOME/system-images/android-35/default/x86_64/system.img"
+          ready=0
+          for attempt in 1 2 3; do
+            if "$sdkmanager_bin" --install 'system-images;android-35;default;x86_64' --channel=0 > /tmp/kinder-image-install.log 2>&1 \
+                && test -s "$image_file"; then
+              ready=1
+              break
+            fi
+            echo "Android SDK system image installation attempt ${attempt}/3 failed"
+            tail -n 3 /tmp/kinder-image-install.log || true
+            rm -rf "$ANDROID_HOME/.temp"
+            sleep 5
+          done
+          if test "$ready" -ne 1; then
+            echo "::error::Android 35 image unavailable; actual Android device checks cannot run"
+            exit 1
+          fi
+          echo "Android 35 image verified before emulator boot"
       - name: Run10 fixture and1 real review Android device checks
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
@@ -86,7 +133,7 @@ jobs:
         run: |
           if test -f /tmp/kinder-android-fixture.pid; then kill -TERM "$(cat /tmp/kinder-android-fixture.pid)" 2>/dev/null || true; fi
       - name: Upload review APK and synthetic native evidence only
-        if: always()
+        if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: kinder-android-${{ github.run_attempt }}

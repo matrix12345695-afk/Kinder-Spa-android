@@ -174,6 +174,81 @@ class BrowserTests(Fixture):
         expect(self.page.locator('#bookings-list')).to_contain_text('Посещение учтено')
         self.assertEqual(self.conn.execute('SELECT state FROM bookings WHERE id=%s',(booking,)).fetchone()[0],'consumed')
 
+    def test_staff_camera_scan_fills_qr_without_auto_redeeming(self):
+        booking = self.store.book(self.client, self.subscription, 'pool',
+                                  accounting.START, 45, 'browser_cam_book')['booking_id']
+        self.now = accounting.START
+        self.page.clock.set_fixed_time(self.now)
+        qr = self.store.issue_qr(self.client, booking)['token']
+        self.sign_in()
+        self.loaded()
+        self.nav('bookings')
+        self.page.evaluate("""token => {
+          window.__cameraToken = token;
+          window.__cameraStopped = 0;
+          const stream = new MediaStream();
+          Object.defineProperty(stream, 'getTracks', {value: () => [
+            {stop: () => {window.__cameraStopped++;}}
+          ]});
+          Object.defineProperty(navigator, 'mediaDevices', {
+            configurable: true, value: {getUserMedia: async () => stream}
+          });
+          Object.defineProperty(window, 'BarcodeDetector', {
+            configurable: true, value: class {
+              async detect() {return [{rawValue: window.__cameraToken}];}
+            }
+          });
+          HTMLMediaElement.prototype.play = async function() {};
+        }""", qr)
+        self.page.get_by_role('button', name='Отметить визит', exact=True).click()
+        expect(self.page.locator('#start-qr-scan')).to_be_visible()
+        self.page.locator('#start-qr-scan').click()
+        expect(self.page.locator('#action-input')).to_have_value(qr)
+        expect(self.page.locator('#qr-scan-status')).to_have_text(
+            'QR-код считан. Подтвердите посещение.')
+        self.assertEqual(self.page.evaluate('window.__cameraStopped'), 1)
+        self.assertTrue(self.page.evaluate(
+            'document.getElementById("qr-scan-video").srcObject === null'))
+        self.assertEqual(self.conn.execute(
+            'SELECT state FROM bookings WHERE id=%s', (booking,)).fetchone()[0], 'reserved')
+        self.page.locator('#confirm-action').click()
+        expect(self.page.locator('#bookings-list')).to_contain_text('Посещение учтено')
+
+    def test_late_camera_permission_cannot_restart_after_dialog_close(self):
+        self.store.book(self.client, self.subscription, 'pool', accounting.START, 45,
+                        'browser_camera_permission_fixture')
+        self.sign_in()
+        self.loaded()
+        self.nav('bookings')
+        self.page.evaluate("""() => {
+          window.__cameraStopped = 0;
+          window.__cameraPending = null;
+          Object.defineProperty(navigator, 'mediaDevices', {
+            configurable: true,
+            value: {getUserMedia: () => new Promise(resolve => {
+              window.__cameraPending = resolve;
+            })}
+          });
+          Object.defineProperty(window, 'BarcodeDetector', {
+            configurable: true, value: class {async detect() {return [];}}
+          });
+        }""")
+        self.page.get_by_role('button', name='Отметить визит', exact=True).click()
+        self.page.locator('#start-qr-scan').click()
+        expect(self.page.locator('#start-qr-scan')).to_be_disabled()
+        self.page.locator('#cancel-dialog').click()
+        expect(self.page.locator('#action-dialog')).to_be_hidden()
+        self.page.evaluate("""() => {
+          const stream = new MediaStream();
+          Object.defineProperty(stream, 'getTracks', {value: () => [
+            {stop: () => {window.__cameraStopped++;}}
+          ]});
+          window.__cameraPending(stream);
+        }""")
+        self.page.wait_for_function('window.__cameraStopped === 1')
+        self.assertTrue(self.page.evaluate(
+            'document.getElementById("qr-scan-video").srcObject === null'))
+
     def test_password_reset_revokes_existing_client_session(self):
         old=self.login();self.sign_in();self.loaded();self.nav('clients')
         self.page.locator('#clients-list .record').filter(has_text='client_fixture').get_by_role('button',name='Сбросить пароль').click()

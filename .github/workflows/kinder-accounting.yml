@@ -1,9 +1,9 @@
 name: Kinder PostgreSQL accounting acceptance
 on:
   push:
-    paths: ['backend/**', 'render.yaml', '.github/workflows/kinder-accounting.yml']
+    paths: ['backend/**', 'preview/**', 'ci/verify_preview.py', 'render.yaml', '.github/workflows/kinder-accounting.yml']
   pull_request:
-    paths: ['backend/**', 'render.yaml', '.github/workflows/kinder-accounting.yml']
+    paths: ['backend/**', 'preview/**', 'ci/verify_preview.py', 'render.yaml', '.github/workflows/kinder-accounting.yml']
 permissions:
   contents: read
 jobs:
@@ -42,14 +42,24 @@ jobs:
           python -m pip install --require-hashes --only-binary=:all: -r backend/browser-requirements.lock
       - name: Install fixed Chromium revision
         run: python -m playwright install --with-deps --only-shell chromium
-      - name: Run all207 accounting, Telegram and Render gateway checks
+      - name: Verify isolated PostgreSQL18 first-install migrations
+        env:
+          KINDER_TEST_DATABASE_URL: postgresql://postgres:fixture-only@127.0.0.1:15439/kinder_test
+        run: python backend/verify_migrations.py
+      - name: Rehearse synthetic PostgreSQL18 pg_dump and pg_restore
+        env:
+          KINDER_TEST_DATABASE_URL: postgresql://postgres:fixture-only@127.0.0.1:15439/kinder_test
+        run: python backend/rehearse_backup_restore.py
+      - name: Run all220 accounting, Telegram and Render gateway checks
         env:
           KINDER_TEST_DATABASE_URL: postgresql://postgres:fixture-only@127.0.0.1:15439/kinder_test
         run: python backend/run_checks.py
-      - name: Run all24 real admin browser checks
+      - name: Run all26 real admin browser checks
         env:
           KINDER_TEST_DATABASE_URL: postgresql://postgres:fixture-only@127.0.0.1:15439/kinder_test
         run: python backend/run_browser_checks.py
+      - name: Verify static RU/UZ preview in real Chromium
+        run: python ci/verify_preview.py
       - name: Upload synthetic accounting evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

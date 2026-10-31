@@ -19,7 +19,7 @@ from .telegram_runner import connection_factory, database_transport
 
 TABLES = {
     'accounts': 'SELECT,INSERT,UPDATE',
-    'subscriptions': 'SELECT,INSERT',
+    'subscriptions': 'SELECT,INSERT,UPDATE',
     'allowances': 'SELECT,INSERT,UPDATE',
     'bookings': 'SELECT,INSERT,UPDATE',
     'qr_tokens': 'SELECT,INSERT,UPDATE',
@@ -35,6 +35,25 @@ TELEGRAM_TABLES = (
     'telegram_runtime', 'telegram_actions', 'telegram_notification_batches',
     'telegram_jobs', 'telegram_qr_cleanup',
 )
+
+
+# Structural launch checks, never a substitute for a verified backup.
+# PostgreSQL pg_trigger.tgtype: ROW=1, BEFORE=2, DELETE=8, UPDATE=16.
+SAFETY_TRIGGERS = {
+    'audit_events': ('audit_no_update', 'immutable_audit', 27, None),
+    'notification_outbox': ('notification_outbox_no_update', 'immutable_audit', 27, None),
+    'accounts': ('accounts_id_immutable', 'immutable_identifier', 19, 'id'),
+    'subscriptions': ('subscriptions_id_immutable', 'immutable_identifier', 19, 'id'),
+    'credentials': ('credentials_account_immutable', 'immutable_identifier', 19, 'account_id'),
+    'auth_sessions': ('sessions_token_immutable', 'immutable_identifier', 19, 'token_hash'),
+}
+REQUIRED_INDEXES = {'qr_booking': ('qr_tokens', False),
+                    'sessions_by_account': ('auth_sessions', False)}
+TELEGRAM_REQUIRED_INDEXES = {
+    'telegram_one_account': ('telegram_bindings', True),
+    'telegram_one_peer': ('telegram_bindings', True),
+    'telegram_ready': ('telegram_jobs', False),
+}
 
 
 @dataclass(frozen=True)
@@ -122,12 +141,46 @@ def inspect_database(factory, schema, *, telegram_links=False):
             if name == 'audit_events' and conn.execute(
                     "SELECT has_table_privilege(current_user,%s,'UPDATE,DELETE,TRUNCATE')", (relation[0],)).fetchone()[0]:
                 denied.append('audit_events:mutable')
+
+        missing_safety = []
+        if present:
+            for table, (trigger, function, tgtype, column) in SAFETY_TRIGGERS.items():
+                row = conn.execute("""SELECT t.tgenabled,t.tgtype,p.proname,pn.nspname,
+                        coalesce((SELECT string_agg(a.attname, ',' ORDER BY a.attname)
+                            FROM pg_attribute a WHERE a.attrelid=c.oid
+                            AND a.attnum=ANY(t.tgattr::int2[])), '')
+                    FROM pg_trigger t
+                    JOIN pg_class c ON c.oid=t.tgrelid
+                    JOIN pg_namespace n ON n.oid=c.relnamespace
+                    JOIN pg_proc p ON p.oid=t.tgfoid
+                    JOIN pg_namespace pn ON pn.oid=p.pronamespace
+                    WHERE n.nspname=%s AND c.relname=%s AND t.tgname=%s
+                    AND NOT t.tgisinternal""", (schema, table, trigger)).fetchone()
+                if (row is None or row[0] not in ('O','A')
+                        or row[1] != tgtype or row[2] != function or row[3] != schema
+                        or row[4] != (column or '')):
+                    missing_safety.append(table + ':' + trigger)
+            indexes = REQUIRED_INDEXES | (TELEGRAM_REQUIRED_INDEXES if telegram_links else {})
+            for index, (table, unique) in indexes.items():
+                row = conn.execute("""SELECT i.indisvalid,i.indisready,i.indisunique
+                    FROM pg_index i
+                    JOIN pg_class idx ON idx.oid=i.indexrelid
+                    JOIN pg_namespace idxn ON idxn.oid=idx.relnamespace
+                    JOIN pg_class t ON t.oid=i.indrelid
+                    JOIN pg_namespace tn ON tn.oid=t.relnamespace
+                    WHERE idxn.nspname=%s AND tn.nspname=%s
+                    AND idx.relname=%s AND t.relname=%s""",
+                    (schema, schema, index, table)).fetchone()
+                if not row or not row[0] or not row[1] or bool(row[2]) != unique:
+                    missing_safety.append(table + ':' + index)
         schema_usage = present and conn.execute('SELECT has_schema_privilege(current_user,%s,\'USAGE\')', (schema,)).fetchone()[0]
         result = {'postgres_major': major, 'schema_present': present,
                   'schema_usage': bool(schema_usage), 'runtime_role_safe': not unsafe and not owned,
-                  'missing_tables': missing, 'insufficient_privileges': denied,
+                  'missing_tables': missing, 'missing_safety_objects': missing_safety,
+                  'insufficient_privileges': denied,
                   'metadata_only': True, 'read_only': True, 'tls_in_use': bool(conn.pgconn.ssl_in_use)}
-        result['ready'] = bool(major == 18 and present and schema_usage and not unsafe and not owned and not missing and not denied)
+        result['ready'] = bool(major == 18 and present and schema_usage and not unsafe
+                               and not owned and not missing and not missing_safety and not denied)
         return result
 
 

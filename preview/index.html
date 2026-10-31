@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow,noarchive"><meta name="color-scheme" content="light">
+<title>Kinder Spa · Демонстрация интерфейса</title>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#234157;background:#f2f8fc;--blue:#147eae;--dark:#153c59;--muted:#688095;--line:#e1edf5;--green:#008d83}
+*{box-sizing:border-box}body{margin:0}button{font:inherit;cursor:pointer;border:0;min-height:42px}button:focus-visible{outline:3px solid #f2b449;outline-offset:2px}button:hover{filter:brightness(.97)}
+.banner{background:#133b58;color:#fff;padding:9px 5%;text-align:center;font-size:12px;font-weight:650;letter-spacing:.2px}
+header{background:#fff;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;padding:18px max(25px,5vw);gap:16px}
+.brand{font-size:24px;font-weight:800;letter-spacing:-1px;display:flex;align-items:center;gap:11px}.brand span{color:var(--blue);font-weight:500}.mark{width:45px;height:45px;border-radius:14px;background:#def3ff;color:#087eb4;font-size:37px;display:grid;place-items:center;line-height:1}
+.lang{display:flex;border:1px solid var(--line);border-radius:12px;background:#f1f7fb;padding:3px;gap:4px}.lang button{padding:5px 15px;border-radius:9px;background:transparent;color:#71859a;font-size:12px;font-weight:800;min-height:33px}.lang button[aria-pressed=true]{background:#fff;color:var(--blue);box-shadow:0 2px 5px #173e5010}
+.layout{display:grid;grid-template-columns:225px minmax(0,1fr);min-height:calc(100vh - 115px)}aside{background:#fff;border-right:1px solid var(--line);padding:30px 14px;display:flex;flex-direction:column}
+aside small{padding:0 15px;color:#8b9cac;font-size:10px;font-weight:800;letter-spacing:1.1px}.menu{display:grid;gap:5px;margin-top:19px}.menu button{text-align:left;background:transparent;color:#647d92;border-radius:12px;font-size:13px;font-weight:650;display:flex;align-items:center;gap:12px;padding:12px 15px}.menu button[aria-current=page]{background:#eaf6fd;color:#0878ad}.menu .ico{font-size:21px;width:24px;text-align:center}aside .foot{margin-top:auto;padding:20px 15px 0;color:var(--muted);font-size:11px;border-top:1px solid var(--line)}
+main{padding:32px clamp(19px,4.5vw,68px);max-width:1490px;width:100%}.top{display:flex;justify-content:space-between;align-items:end;margin-bottom:25px;gap:20px}.eyebrow{font-size:10px;color:#1683b0;letter-spacing:1.5px;font-weight:800;text-transform:uppercase}h1{font-size:31px;letter-spacing:-1px;margin:7px 0 0}h2{font-size:21px;letter-spacing:-.4px;margin:0 0 13px}h3{font-size:15px;margin:0 0 10px}p{margin:0;color:var(--muted);line-height:1.55}
+.date{border-radius:12px;background:white;border:1px solid var(--line);padding:10px 15px;font-size:12px;color:#57748a;font-weight:650}
+.hero{padding:35px;display:flex;justify-content:space-between;align-items:center;gap:24px;background:linear-gradient(115deg,#087caf,#2ba7d3);border-radius:22px;color:white;position:relative;overflow:hidden}.hero h2{font-size:34px;line-height:1.15;max-width:460px}.hero p{color:#e5f7ff;max-width:490px;font-size:14px}.bubbles{font-size:130px;font-weight:200;opacity:.38;margin-right:28px;line-height:1}.hero button{margin-top:20px;background:#fff;color:#0b7caf;font-size:12px;border-radius:10px;font-weight:750;padding:10px 18px}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:20px 0}.stat,.panel{background:#fff;border:1px solid var(--line);border-radius:18px;padding:24px}.stat small{color:var(--muted);font-size:12px}.stat strong{display:block;font-size:33px;line-height:1.2;margin:10px 0 4px;color:var(--dark)}.stat em{font-size:11px;font-style:normal;color:#8299aa}
+.twocol{display:grid;grid-template-columns:1.3fr 1fr;gap:19px}.hint{display:flex;gap:10px;padding:13px 15px;border-radius:12px;background:#eef8fd;font-size:12px;color:#4d7489;margin:10px 0}
+.row{display:flex;align-items:center;gap:12px;padding:15px 0;border-bottom:1px solid #edf3f7}.row:last-child{border:0}.row .body{flex:1;min-width:0}.row strong{display:block;font-size:13px}.row small{display:block;color:var(--muted);margin-top:3px;font-size:11px}.pill{border-radius:99px;padding:6px 10px;font-size:10px;font-weight:750;background:#eaf5fb;color:#237da8;white-space:nowrap}.pill.ok{background:#e3f8f2;color:#00876f}.pill.warn{background:#fff4db;color:#97661b}.pill.bad{background:#ffece8;color:#b0574d}
+.tab[hidden]{display:none}.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(235px,1fr));gap:16px}.item{background:#fff;border:1px solid var(--line);padding:20px;border-radius:17px}.item p{font-size:12px;margin:7px 0}.item strong{font-size:14px}.item .metric{font-size:25px;color:var(--blue);display:block;font-weight:800;margin:12px 0 4px}
+.btn{background:#0d83b7;color:#fff;padding:9px 14px;border-radius:9px;font-size:11px;font-weight:750;margin-top:9px}.btn.light{background:#e8f5fb;color:#0e739f}.btn:disabled{background:#e1e9ee;color:#91a6b4;cursor:not-allowed}.callout{background:white;border:1px solid var(--line);padding:16px;border-radius:14px;margin-bottom:20px;color:#5c7a8c;font-size:12px}.demo{display:inline-block;background:#e0f6ff;color:#087caf;border-radius:99px;padding:5px 11px;font-size:10px;font-weight:800}
+#message{position:fixed;right:24px;bottom:24px;max-width:360px;background:#173b53;color:white;border-radius:13px;padding:17px 21px;font-size:13px;box-shadow:0 12px 40px #23415733;z-index:5}#message[hidden]{display:none}
+footer{padding:20px 4vw;text-align:center;font-size:11px;color:#6b899d;background:#fff;border-top:1px solid var(--line)}
+@media(max-width:900px){.layout{grid-template-columns:1fr}aside{padding:9px 14px;display:block;overflow:auto}aside small,aside .foot{display:none}.menu{display:flex;margin:0;gap:3px;white-space:nowrap}.menu button{padding:10px;font-size:11px;gap:6px}.menu .ico{font-size:17px;width:17px}main{padding:24px 18px}.twocol{grid-template-columns:1fr}.bubbles{display:none}}
+@media(max-width:550px){header{padding:14px 16px}.brand{font-size:21px}.mark{width:39px;height:39px}.top{align-items:start;flex-direction:column;gap:10px}h1{font-size:26px}.hero{padding:25px}.hero h2{font-size:27px}.stats{gap:8px}.stat{padding:14px}.stat strong{font-size:27px}.row{flex-wrap:wrap}.menu button{padding:9px 11px}#message{left:16px;right:16px;bottom:16px}}
+</style>
+</head>
+<body>
+<div class="banner" data-t="banner">ДЕМОНСТРАЦИЯ · Только вымышленные данные · Изменения не сохраняются на сервере</div>
+<header><div class="brand"><div class="mark">≈</div><div>Kinder <span>Spa</span></div></div><div class="lang" aria-label="Language"><button id="ru" aria-pressed="true">RU</button><button id="uz" aria-pressed="false">UZ</button></div></header>
+<div class="layout"><aside><small data-t="workspace">РАБОЧЕЕ ПРОСТРАНСТВО</small><nav class="menu" aria-label="Разделы">
+<button data-tab="overview" aria-current="page"><span class="ico">▦</span><span data-t="overview">Обзор</span></button>
+<button data-tab="clients"><span class="ico">♧</span><span data-t="clients">Клиенты</span></button>
+<button data-tab="subscriptions"><span class="ico">▤</span><span data-t="subs">Абонементы</span></button>
+<button data-tab="bookings"><span class="ico">◷</span><span data-t="bookings">Записи</span></button>
+<button data-tab="audit"><span class="ico">↺</span><span data-t="audit">История</span></button></nav>
+<div class="foot" data-t="demoFoot">Просмотр для владельца · Без подключения к API или PostgreSQL</div></aside>
+<main>
+<div class="top"><div><div class="eyebrow" data-t="welcome">Добро пожаловать в Kinder Spa</div><h1 id="heading">Обзор</h1></div><div class="date" data-t="sampleDate">Образец · 02.11.2026</div></div>
+<section id="overview" class="tab">
+<div class="hero"><div><div class="eyebrow" style="color:#bceaff" data-t="every">КАЖДЫЙ СЕАНС ИМЕЕТ ЗНАЧЕНИЕ</div><h2 data-t="hero">Всё под рукой. Всё в порядке.</h2><p data-t="heroBody">Управление абонементами, расписанием и посещениями в одном рабочем пространстве.</p><button data-open="bookings" data-t="goBookings">Посмотреть расписание ↗</button></div><span class="bubbles">≈</span></div>
+<div class="stats"><article class="stat"><small data-t="clients">Клиенты</small><strong>3</strong><em data-t="sample">пример данных</em></article><article class="stat"><small data-t="subs">Абонементы</small><strong>3</strong><em data-t="sample">пример данных</em></article><article class="stat"><small data-t="bookings">Записи</small><strong id="bookingTotal">4</strong><em data-t="sample">пример данных</em></article></div>
+<div class="twocol"><section class="panel"><h2 data-t="today">Ближайшие сеансы</h2><div id="todayList"></div></section><section class="panel"><h2 data-t="rules">Правила центра</h2><div class="hint">◷ <span data-t="rule1">Бассейн: 45 минут, из них 5 минут на переодевание.</span></div><div class="hint">↺ <span data-t="rule2">Отмена бассейна строго до 19:00 предыдущего дня.</span></div><div class="hint">✓ <span data-t="rule3">Пн–сб, 09:00–19:00. Воскресенье выходной.</span></div></section></div>
+</section>
+<section id="clients" class="tab" hidden><p class="callout" data-t="sampleInfo">Ниже только вымышленные клиенты. Реальные данные и пароли не подключены.</p><div id="clientCards" class="cards"></div></section>
+<section id="subscriptions" class="tab" hidden><p class="callout" data-t="prices">Стоимость услуг будет добавлена после согласования. Количество сеансов уже предусмотрено.</p><div id="subscriptionCards" class="cards"></div></section>
+<section id="bookings" class="tab" hidden><p class="callout" data-t="bookingInfo">Нажмите на действия, чтобы увидеть пример работы. Все изменения остаются только в этом браузере.</p><div class="panel"><h2 data-t="schedule">Расписание · 02.11.2026</h2><div id="bookingList"></div></div></section>
+<section id="audit" class="tab" hidden><p class="callout" data-t="auditInfo">В рабочей системе журнал неизменяемый, а восстановление сеанса отправляет уведомление суперадминистратору. Здесь отправка имитируется.</p><div class="panel"><h2 data-t="audit">История</h2><div id="auditList"></div></div></section>
+</main></div><footer data-t="footer">Kinder Spa · Предпросмотр интерфейса · Без входа, оплат, Telegram и реальных персональных данных</footer>
+<div id="message" role="status" aria-live="polite" hidden></div>
+<script>
+'use strict';
+(function(){
+const T={
+ru:{banner:'ДЕМОНСТРАЦИЯ · Только вымышленные данные · Изменения не сохраняются на сервере',workspace:'РАБОЧЕЕ ПРОСТРАНСТВО',overview:'Обзор',clients:'Клиенты',subs:'Абонементы',bookings:'Записи',audit:'История',demoFoot:'Просмотр для владельца · Без подключения к API или PostgreSQL',welcome:'Добро пожаловать в Kinder Spa',sampleDate:'Образец · 02.11.2026',every:'КАЖДЫЙ СЕАНС ИМЕЕТ ЗНАЧЕНИЕ',hero:'Всё под рукой. Всё в порядке.',heroBody:'Управление абонементами, расписанием и посещениями в одном рабочем пространстве.',goBookings:'Посмотреть расписание ↗',sample:'пример данных',today:'Ближайшие сеансы',rules:'Правила центра',rule1:'Бассейн: 45 минут, из них 5 минут на переодевание.',rule2:'Отмена бассейна строго до 19:00 предыдущего дня.',rule3:'Пн–сб, 09:00–19:00. Воскресенье выходной.',sampleInfo:'Ниже только вымышленные клиенты. Реальные данные и пароли не подключены.',prices:'Стоимость услуг будет добавлена после согласования. Количество сеансов уже предусмотрено.',bookingInfo:'Нажмите на действия, чтобы увидеть пример работы. Все изменения остаются только в этом браузере.',schedule:'Расписание · 02.11.2026',auditInfo:'В рабочей системе журнал неизменяемый, а восстановление сеанса отправляет уведомление суперадминистратору. Здесь отправка имитируется.',footer:'Kinder Spa · Предпросмотр интерфейса · Без входа, оплат, Telegram и реальных персональных данных',pool:'Бассейн',massage:'Детский массаж',hydro:'Гидромассаж',remaining:'Осталось',visits:'сеансов',reserved:'Записан',visited:'Посещение учтено',forfeit:'Сеанс сгорел',restored:'Восстановлен',mark:'Отметить посещение (демо)',restore:'Восстановить (демо)',reason:'Введите причину восстановления (демо, без личных сведений):',mandatory:'Причина обязательна.',notice:'Демонстрация: обновлено только в браузере. В Telegram ничего не отправлено.',initial:'Пример расписания создан',demoAudit:'Восстановлен тестовый сеанс (без отправки сообщений)',client:'Клиент'},
+uz:{banner:'NAMOYISH · Faqat xayoliy maʼlumotlar · Oʻzgarishlar serverda saqlanmaydi',workspace:'ISH MAYDONI',overview:'Umumiy',clients:'Mijozlar',subs:'Abonementlar',bookings:'Yozuvlar',audit:'Tarix',demoFoot:'Egasi uchun koʻrish · API va PostgreSQL ulanmagan',welcome:'Kinder Spaʼga xush kelibsiz',sampleDate:'Namuna · 02.11.2026',every:'HAR BIR SEANS MUHIM',hero:'Barchasi qoʻl ostida. Barchasi tartibda.',heroBody:'Abonementlar, jadval va tashriflar bir joyda.',goBookings:'Jadvalni koʻrish ↗',sample:'namuna maʼlumotlari',today:'Yaqin seanslar',rules:'Markaz qoidalari',rule1:'Basseyn: 45 daqiqa, shundan 5 daqiqa kiyinish uchun.',rule2:'Basseynni oldingi kun soat 19:00 gacha bekor qilish.',rule3:'Du–Shan, 09:00–19:00. Yakshanba dam olish.',sampleInfo:'Quyida faqat xayoliy mijozlar mavjud. Haqiqiy maʼlumot va parollar ulanmagan.',prices:'Narxlar kelishilgandan keyin qoʻshiladi. Seanslar soni tayyor.',bookingInfo:'Ishlash misolini koʻrish uchun tugmalarni bosing. Oʻzgarishlar faqat brauzerda qoladi.',schedule:'Jadval · 02.11.2026',auditInfo:'Haqiqiy tizimda tarix oʻzgarmaydi va tiklash superadminga xabar yuboradi. Bu yerda yuborish taqlid qilinadi.',footer:'Kinder Spa · Koʻrgazmali interfeys · Kirish, toʻlov, Telegram va shaxsiy maʼlumotlarsiz',pool:'Basseyn',massage:'Bolalar massaji',hydro:'Gidromassaj',remaining:'Qoldi',visits:'seans',reserved:'Band qilingan',visited:'Tashrif qayd etildi',forfeit:'Seans bekor boʻldi',restored:'Tiklandi',mark:'Tashrifni belgilash (demo)',restore:'Tiklash (demo)',reason:'Tiklash sababini kiriting (demo, shaxsiy maʼlumotsiz):',mandatory:'Sabab majburiy.',notice:'Namoyish: faqat brauzer yangilandi. Telegramga hech narsa yuborilmadi.',initial:'Namuna jadval yaratildi',demoAudit:'Sinov seansi tiklandi (xabar yuborilmadi)',client:'Mijoz'}
+};
+const clients=[{id:1,service:'pool',quota:4,remaining:3},{id:2,service:'massage',quota:10,remaining:8},{id:3,service:'hydro',quota:10,remaining:10}];
+const bookings=[{id:1,client:1,service:'pool',time:'09:00',state:'visited'},{id:2,client:2,service:'massage',time:'11:00',state:'reserved'},{id:3,client:3,service:'hydro',time:'14:30',state:'reserved'},{id:4,client:1,service:'pool',time:'16:00',state:'forfeit'}];
+const audit=[{text:'initial',time:'08:45'}];
+let lang='ru',tab='overview';
+const $=id=>document.getElementById(id), tx=k=>T[lang][k]||k;
+function el(tag,klass,text){const n=document.createElement(tag);if(klass)n.className=klass;if(text!==undefined)n.textContent=text;return n}
+function clear(id){$(id).replaceChildren()}
+function line(parent,title,sub,tag,kind,callback){
+ const row=el('div','row');const body=el('div','body');body.append(el('strong','',title),el('small','',sub));row.append(body);
+ if(tag){if(callback){const b=el('button','btn light',tag);b.type='button';b.addEventListener('click',callback);row.append(b)}else row.append(el('span','pill '+(kind||''),tag))}
+ parent.append(row)
+}
+function show(name){tab=name;document.querySelectorAll('.tab').forEach(e=>e.hidden=e.id!==name);document.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-current',b.dataset.tab===name?'page':'false'));$('heading').textContent=tx(({overview:'overview',clients:'clients',subscriptions:'subs',bookings:'bookings',audit:'audit'})[name]);render()}
+function render(){
+ document.documentElement.lang=lang;document.querySelectorAll('[data-t]').forEach(n=>n.textContent=tx(n.dataset.t));
+ $('ru').setAttribute('aria-pressed',String(lang==='ru'));$('uz').setAttribute('aria-pressed',String(lang==='uz'));
+ $('heading').textContent=tx(({overview:'overview',clients:'clients',subscriptions:'subs',bookings:'bookings',audit:'audit'})[tab]);
+ $('bookingTotal').textContent=String(bookings.length);
+ clear('todayList');bookings.slice(0,3).forEach(b=>line($('todayList'),b.time+' · '+tx(b.service),tx('client')+' #00'+b.client,tx(b.state),b.state==='visited'?'ok':''));
+ clear('clientCards');clients.forEach(c=>{const card=el('article','item');card.append(el('strong','',tx('client')+' #00'+c.id),el('p','',tx(c.service)),el('span','metric',c.remaining+' / '+c.quota),el('p','',tx('remaining')+' · '+tx('visits')));$('clientCards').append(card)});
+ clear('subscriptionCards');clients.forEach(c=>{const card=el('article','item');card.append(el('span','demo','DEMO'),el('h3','',tx(c.service)),el('p','',tx('client')+' #00'+c.id),el('span','metric',c.remaining+' / '+c.quota),el('p','',tx('remaining')+' · '+tx('visits')));$('subscriptionCards').append(card)});
+ clear('bookingList');bookings.forEach(b=>{const sub=tx('client')+' #00'+b.client+' · '+tx(b.service);let action=null;if(b.state==='reserved')action=()=>act(b,'visited');if(b.state==='forfeit')action=()=>act(b,'restored');line($('bookingList'),b.time+' · '+sub,tx(b.state),action?(b.state==='forfeit'?tx('restore'):tx('mark')):tx(b.state),b.state==='visited'?'ok':b.state==='forfeit'?'bad':'',action)});
+ clear('auditList');audit.slice().reverse().forEach(a=>line($('auditList'),tx(a.text),a.time,'DEMO',''));
+}
+function notify(){const msg=$('message');msg.textContent=tx('notice');msg.hidden=false}
+function act(b,next){
+ if(next==='restored'){const reason=window.prompt(tx('reason'));if(reason===null)return;if(reason.trim().length<4){alert(tx('mandatory'));return}audit.push({text:'demoAudit',time:b.time});clients.find(c=>c.id===b.client).remaining+=1}
+ else audit.push({text:'visited',time:b.time});
+ b.state=next;render();notify()
+}
+$('ru').addEventListener('click',()=>{lang='ru';render()});$('uz').addEventListener('click',()=>{lang='uz';render()});
+document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>show(b.dataset.tab)));
+document.querySelectorAll('[data-open]').forEach(b=>b.addEventListener('click',()=>show(b.dataset.open)));
+render();
+})();
+</script>
+</body></html>
