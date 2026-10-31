@@ -115,7 +115,10 @@ class TelegramRuntimeRoleTests(Fixture):
                 result = conn.execute('SELECT id FROM notification_outbox WHERE id=%s FOR UPDATE',
                                       (outbox,)).fetchone()
                 self.assertEqual(result[0], outbox)
-            with self.assertRaises(psycopg.errors.RaiseException):
+            # GENERATED ALWAYS rejects updates to identity columns before
+            # reaching our append-only trigger. The same-role UPDATE grant
+            # is still sufficient for SELECT ... FOR UPDATE row locking.
+            with self.assertRaises(psycopg.errors.GeneratedAlways):
                 with conn.transaction():
                     conn.execute('UPDATE notification_outbox SET id=id WHERE id=%s', (outbox,))
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
@@ -134,14 +137,17 @@ class TelegramRuntimeRoleTests(Fixture):
             for relation in ('accounts', 'subscriptions', 'credentials', 'auth_sessions'):
                 with conn.transaction():
                     conn.execute('SELECT * FROM ' + relation + ' LIMIT 1 FOR SHARE')
-            for command in (
-                'UPDATE accounts SET id=id WHERE id=%s',
-                'UPDATE subscriptions SET id=id WHERE id=%s',
-                'UPDATE credentials SET account_id=account_id WHERE account_id=%s',
+            for command, value, expected_error in (
+                ('UPDATE accounts SET id=id WHERE id=%s', self.client,
+                 psycopg.errors.GeneratedAlways),
+                ('UPDATE subscriptions SET id=id WHERE id=%s', self.subscription,
+                 psycopg.errors.GeneratedAlways),
+                ('UPDATE credentials SET account_id=account_id WHERE account_id=%s',
+                 self.client, psycopg.errors.RaiseException),
             ):
-                with self.assertRaises(psycopg.errors.RaiseException):
+                with self.assertRaises(expected_error):
                     with conn.transaction():
-                        conn.execute(command, (self.client if 'subscriptions' not in command else self.subscription,))
+                        conn.execute(command, (value,))
             for command in (
                 'UPDATE accounts SET enabled=false WHERE id=%s',
                 'UPDATE subscriptions SET client_id=%s WHERE id=%s',
