@@ -161,6 +161,53 @@ class TelegramRuntimeRoleTests(Fixture):
                 with conn.transaction():
                     conn.execute('UPDATE auth_sessions SET revoked=true')
 
+    def test_runtime_role_completes_restoration_and_superadmin_receipt(self):
+        # Exercise a real business write path as the narrowed Telegram role.
+        # Earlier checks of an empty polling cycle cannot prove restoration.
+        from datetime import timedelta
+        from test_postgres import START
+        from test_telegram import BOT_ID, FakeAPI, update, callback
+        from auth_fixtures import PASSWORD
+
+        self.conn.execute("""INSERT INTO credentials
+            SELECT %s,%s,salt,verifier,1 FROM credentials LIMIT 1""",
+            (self.superadmin, 'super_fixture'))
+        bot = Bot(self.runtime_factory, clock=lambda: self.now)
+        bot.configure(BOT_ID, 'KinderFixtureBot')
+
+        admin_token = self.login('admin_fixture')
+        super_token = self.auth.login('super_fixture', PASSWORD, '127.0.0.1')['access_token']
+        for ident, peer, token in ((100, 202, admin_token), (200, 303, super_token)):
+            payload = bot.issue_link(token)['start_payload']
+            self.assertTrue(bot.process(update(ident, peer, '/start ' + payload)))
+
+        booking = self.store.book(self.client, self.subscription, 'pool',
+                                  START, 45, 'role_restore_book')['booking_id']
+        self.now = START - timedelta(hours=13)
+        self.store.cancel_pool(self.client, booking, 'role_late_cancel')
+        self.assertEqual(self.conn.execute('SELECT state FROM bookings WHERE id=%s',
+                                           (booking,)).fetchone()[0], 'forfeited')
+        self.assertTrue(bot.process(update(300, 202, '/restore ' + str(booking) +
+                                            ' synthetic staff reason')))
+        action = self.conn.execute('SELECT id FROM telegram_actions ORDER BY update_id DESC LIMIT 1').fetchone()[0]
+        self.assertTrue(bot.process(callback(301, 202, 'do:' + str(action))))
+        self.assertEqual(self.conn.execute('SELECT state FROM bookings WHERE id=%s',
+                                           (booking,)).fetchone()[0], 'restored')
+        self.assertEqual(self.conn.execute('SELECT remaining FROM allowances WHERE subscription_id=%s AND category=%s',
+                                           (self.subscription, 'pool')).fetchone()[0], 4)
+        self.assertEqual(bot.fanout(), 1)
+        fake = FakeAPI()
+        sender = Sender(bot, fake)
+        for _ in range(20):
+            if not sender.send_one():
+                break
+        result = self.conn.execute("""SELECT j.state,j.message_id,j.payload FROM telegram_jobs j
+            WHERE j.outbox_id IS NOT NULL""").fetchone()
+        self.assertEqual(result[0], 'delivered')
+        self.assertGreater(result[1], 0)
+        self.assertNotIn('staff reason', str(result[2]))
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM notification_outbox').fetchone()[0], 1)
+
     def test_worker_can_configure_and_poll_empty_synthetic_queue(self):
         bot = Bot(self.runtime_factory)
         bot.configure(123456789, 'KinderFixtureBot')
