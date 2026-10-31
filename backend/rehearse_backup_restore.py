@@ -48,11 +48,6 @@ def archive_command(directory, entrypoint, args):
 
 
 def prepare(conn):
-    if conn.execute("SELECT 1 FROM pg_namespace WHERE nspname=%s", (SCHEMA,)).fetchone():
-        raise RuntimeError("unexpected existing fixture schema")
-    if conn.execute("SELECT 1 FROM pg_database WHERE datname=%s", (RESTORED,)).fetchone():
-        raise RuntimeError("unexpected existing restore database")
-    conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(SCHEMA)))
     with conn.transaction():
         conn.execute(sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(SCHEMA)))
         for name in ("schema.sql", "auth_schema.sql", "telegram_schema.sql"):
@@ -126,8 +121,13 @@ def main():
         schema_created = False
         restored_created = False
         try:
-            prepare(conn)
+            if conn.execute("SELECT 1 FROM pg_namespace WHERE nspname=%s", (SCHEMA,)).fetchone():
+                raise RuntimeError("unexpected existing fixture schema")
+            if conn.execute("SELECT 1 FROM pg_database WHERE datname=%s", (RESTORED,)).fetchone():
+                raise RuntimeError("unexpected existing restore database")
+            conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(SCHEMA)))
             schema_created = True
+            prepare(conn)
             with tempfile.TemporaryDirectory(prefix="kinder-synthetic-recovery-") as folder:
                 archive_command(folder, "pg_dump", [
                     "-h", "127.0.0.1", "-p", "15439", "-U", "postgres",
