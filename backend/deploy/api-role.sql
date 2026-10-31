@@ -11,7 +11,8 @@ GRANT USAGE ON SCHEMA kinder TO kinder_api_runtime;
 GRANT SELECT,INSERT,UPDATE ON kinder.accounts,kinder.allowances,kinder.bookings,
     kinder.qr_tokens,kinder.operations,kinder.credentials,kinder.auth_sessions
     TO kinder_api_runtime;
-GRANT SELECT,INSERT ON kinder.subscriptions,kinder.audit_events,kinder.notification_outbox
+GRANT SELECT,INSERT,UPDATE ON kinder.subscriptions TO kinder_api_runtime;
+GRANT SELECT,INSERT ON kinder.audit_events,kinder.notification_outbox
     TO kinder_api_runtime;
 GRANT SELECT,INSERT,UPDATE,DELETE ON kinder.login_buckets TO kinder_api_runtime;
 GRANT USAGE ON SEQUENCE kinder.accounts_id_seq,kinder.subscriptions_id_seq,
