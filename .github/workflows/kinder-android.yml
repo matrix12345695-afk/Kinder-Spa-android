@@ -75,7 +75,7 @@ jobs:
           ready=0
           for attempt in 1 2 3; do
             if "$sdkmanager_bin" --install emulator --channel=0 > /tmp/kinder-emulator-install.log 2>&1 \
-                && "$ANDROID_HOME/emulator/emulator" -version > /dev/null 2>&1; then
+                && test -x "$ANDROID_HOME/emulator/emulator"; then
               ready=1
               break
             fi
