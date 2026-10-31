@@ -46,6 +46,10 @@ jobs:
         env:
           KINDER_TEST_DATABASE_URL: postgresql://postgres:fixture-only@127.0.0.1:15439/kinder_test
         run: python backend/verify_migrations.py
+      - name: Rehearse synthetic PostgreSQL18 pg_dump and pg_restore
+        env:
+          KINDER_TEST_DATABASE_URL: postgresql://postgres:fixture-only@127.0.0.1:15439/kinder_test
+        run: python backend/rehearse_backup_restore.py
       - name: Run all214 accounting, Telegram and Render gateway checks
         env:
           KINDER_TEST_DATABASE_URL: postgresql://postgres:fixture-only@127.0.0.1:15439/kinder_test
