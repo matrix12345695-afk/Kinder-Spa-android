@@ -43,6 +43,12 @@ def main():
                 JOIN pg_namespace n ON n.oid=c.relnamespace
                 WHERE n.nspname=%s AND c.relname='audit_events' AND NOT t.tgisinternal""", (schema,)).fetchall()
             assert [t[0] for t in triggers] == ['audit_no_update'], triggers
+            outbox_triggers = conn.execute("""SELECT tgname FROM pg_trigger t
+                JOIN pg_class c ON c.oid=t.tgrelid
+                JOIN pg_namespace n ON n.oid=c.relnamespace
+                WHERE n.nspname=%s AND c.relname='notification_outbox'
+                    AND NOT t.tgisinternal""", (schema,)).fetchall()
+            assert [t[0] for t in outbox_triggers] == ['notification_outbox_no_update'], outbox_triggers
             indexes = {r[0] for r in conn.execute("""SELECT indexname FROM pg_indexes
                 WHERE schemaname=%s""", (schema,))}
             assert {'qr_booking', 'sessions_by_account', 'telegram_one_account',
@@ -68,7 +74,7 @@ def main():
                 pass
             else:
                 raise AssertionError("duplicate first-install unexpectedly accepted")
-            print("PASS: 19 tables, audit trigger, indexes, singleton, quota checks, repeated-install rejection")
+            print("PASS: 19 tables, append-only triggers, indexes, singleton, quota checks, repeated-install rejection")
         finally:
             # Never delete a schema if CREATE SCHEMA itself failed, even on a UUID collision.
             if created:
