@@ -43,6 +43,7 @@ class TelegramRuntimeRoleTests(Fixture):
         # Rewrite *only* literals in the review script for an isolated fixture.
         script = script.replace('kinder_telegram_runtime', self.runtime_role)
         script = script.replace('kinder_spa_db', 'kinder_test')
+        script = script.replace('SCHEMA kinder TO', 'SCHEMA ' + self.schema + ' TO')
         script = script.replace('kinder.', self.schema + '.')
         self.conn.execute(script)
 
