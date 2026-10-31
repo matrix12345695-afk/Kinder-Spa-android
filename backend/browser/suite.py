@@ -215,6 +215,8 @@ class BrowserTests(Fixture):
         expect(self.page.locator('#bookings-list')).to_contain_text('Посещение учтено')
 
     def test_late_camera_permission_cannot_restart_after_dialog_close(self):
+        self.store.book(self.client, self.subscription, 'pool', accounting.START, 45,
+                        'browser_camera_permission_fixture')
         self.sign_in()
         self.loaded()
         self.nav('bookings')
