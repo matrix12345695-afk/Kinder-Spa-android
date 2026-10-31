@@ -61,9 +61,9 @@ FOR EACH ROW EXECUTE FUNCTION immutable_audit();
 -- Restrict the bot's row-lock-only UPDATE(column) grants. These identifiers
 -- are never mutated by the API; reject even an attempted no-op identifier write.
 -- SELECT ... FOR UPDATE / SHARE does not fire UPDATE triggers.
-CREATE FUNCTION immutable_identifier() RETURNS trigger LANGUAGE plpgsql AS $
+CREATE FUNCTION immutable_identifier() RETURNS trigger LANGUAGE plpgsql AS $trigger$
 BEGIN RAISE EXCEPTION 'identity column is immutable'; END;
-$;
+$trigger$;
 CREATE TRIGGER accounts_id_immutable BEFORE UPDATE OF id ON accounts
 FOR EACH ROW EXECUTE FUNCTION immutable_identifier();
 CREATE TRIGGER subscriptions_id_immutable BEFORE UPDATE OF id ON subscriptions
