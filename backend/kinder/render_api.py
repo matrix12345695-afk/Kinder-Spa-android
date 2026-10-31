@@ -19,7 +19,7 @@ from .telegram_runner import connection_factory, database_transport
 
 TABLES = {
     'accounts': 'SELECT,INSERT,UPDATE',
-    'subscriptions': 'SELECT,INSERT',
+    'subscriptions': 'SELECT,INSERT,UPDATE',
     'allowances': 'SELECT,INSERT,UPDATE',
     'bookings': 'SELECT,INSERT,UPDATE',
     'qr_tokens': 'SELECT,INSERT,UPDATE',
