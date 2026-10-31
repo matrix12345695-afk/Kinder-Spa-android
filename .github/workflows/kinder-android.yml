@@ -89,6 +89,27 @@ jobs:
             exit 1
           fi
           echo "Android Emulator executable verified"
+      - name: Install Android 35 default x86_64 image with bounded retries
+        run: |
+          sdkmanager_bin="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          image_file="$ANDROID_HOME/system-images/android-35/default/x86_64/system.img"
+          ready=0
+          for attempt in 1 2 3; do
+            if "$sdkmanager_bin" --install 'system-images;android-35;default;x86_64' --channel=0 > /tmp/kinder-image-install.log 2>&1 \
+                && test -s "$image_file"; then
+              ready=1
+              break
+            fi
+            echo "Android SDK system image installation attempt ${attempt}/3 failed"
+            tail -n 3 /tmp/kinder-image-install.log || true
+            rm -rf "$ANDROID_HOME/.temp"
+            sleep 5
+          done
+          if test "$ready" -ne 1; then
+            echo "::error::Android 35 image unavailable; actual Android device checks cannot run"
+            exit 1
+          fi
+          echo "Android 35 image verified before emulator boot"
       - name: Run10 fixture and1 real review Android device checks
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
