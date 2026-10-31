@@ -32,5 +32,11 @@ After schema is applied, separately provision restricted credentials via Render'
 ## Pricing deliberately deferred
 No amounts or currency have been invented. Future tariffs must be effective-dated and historical purchase prices must not change when catalog prices are edited. Prices and payment/discount rules require a separate approved design and migration.
 
-## Validation not yet completed
-Read-only catalog SQL has been committed for review, but **has not been run** against production or a disposable test database in this work session. Neither restore testing nor executing the 19-table migration is asserted complete. Do not label production-ready before independent test evidence exists.
+## Verified isolated tests (31 October 2026)
+- Real disposable PostgreSQL 18 first-install migrations have passed with all **19 tables**, indexes, append-only triggers and identity-column guards. A repeat first-install is rejected.
+- The synthetic `pg_dump` / `pg_restore` rehearsal has passed, verifying restored rows, sequence continuity, and audit/outbox immutability. **This is NOT proof of Render PITR or recovery of customer data.**
+- The Render API readiness probe now checks that the required audit, notification and immutable-identity triggers are **present, enabled, on the correct table, invoking the expected schema-local function with the expected UPDATE/DELETE event mask**, as well as critical valid indexes. It fails closed if a trigger/index is missing or disabled. This is metadata-only and does not attest to the exact function body, every constraint or a successful production migration.
+- Four isolated PostgreSQL regression cases simulate removed/disabled protection and a missing Telegram uniqueness index. 220 backend tests passed in workflow https://github.com/matrix12345695-afk/Kinder-Spa-android/actions/runs/41202926663 (check entire job conclusion before treating browser acceptance as final).
+- Live database catalog inspection and **actual recovery point availability/restore evidence remain incomplete** because the Render connector has no backup/restore endpoint and external SQL access is disabled. Operator approval is required for billable recovery.
+
+**Status: READY FOR FURTHER REVIEW ONLY. NOT APPROVED FOR PRODUCTION EXECUTION.**
