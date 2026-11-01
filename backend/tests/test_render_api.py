@@ -22,7 +22,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from auth_fixtures import Fixture, PASSWORD
 from kinder.gateway import Server, SafeLogger
-from kinder.render_api import Configuration, RenderApp, configuration, inspect_database, main, TABLES
+from kinder.render_api import Configuration, RenderApp, configuration, inspect_database, main, TABLES, UPDATE_COLUMNS
 
 
 ORIGIN = 'https://kinder-fixture.onrender.com'
@@ -138,6 +138,9 @@ class DatabaseGatewayTests(Fixture):
         self.conn.execute(sql.SQL('GRANT USAGE ON SCHEMA {} TO {}').format(sql.Identifier(self.schema),sql.Identifier(self.runtime_role)))
         for name,privileges in TABLES.items():
             self.conn.execute(sql.SQL('GRANT '+privileges+' ON {}.{} TO {}').format(sql.Identifier(self.schema),sql.Identifier(name),sql.Identifier(self.runtime_role)))
+        for name,columns in UPDATE_COLUMNS.items():
+            self.conn.execute(sql.SQL('GRANT UPDATE (' + ','.join(columns) + ') ON {}.{} TO {}').format(
+                sql.Identifier(self.schema), sql.Identifier(name), sql.Identifier(self.runtime_role)))
         self.conn.execute(sql.SQL('GRANT USAGE ON ALL SEQUENCES IN SCHEMA {} TO {}').format(sql.Identifier(self.schema),sql.Identifier(self.runtime_role)))
         parsed=conninfo_to_dict(self.url);parsed.update(user=self.runtime_role,password='fixture-only')
         self.runtime_url=make_conninfo(**parsed)
@@ -175,10 +178,10 @@ class DatabaseGatewayTests(Fixture):
             conn.execute("SELECT client_id FROM subscriptions LIMIT 1 FOR UPDATE")
 
     def test_subscription_lock_privilege_is_required_by_preflight(self):
-        self.conn.execute(sql.SQL('REVOKE UPDATE ON subscriptions FROM {}').format(sql.Identifier(self.runtime_role)))
+        self.conn.execute(sql.SQL('REVOKE UPDATE(id) ON subscriptions FROM {}').format(sql.Identifier(self.runtime_role)))
         report = self.probe()
         self.assertFalse(report['ready'])
-        self.assertIn('subscriptions:UPDATE', report['insufficient_privileges'])
+        self.assertIn('subscriptions:UPDATE(id)', report['insufficient_privileges'])
         with self.runtime_factory() as conn, conn.transaction():
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 conn.execute("SELECT client_id FROM subscriptions LIMIT 1 FOR UPDATE")
@@ -218,7 +221,7 @@ class DatabaseGatewayTests(Fixture):
         self.conn.execute((Path(__file__).parents[1]/'telegram_schema.sql').read_text())
         self.conn.execute(sql.SQL('GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}').format(
             sql.Identifier(self.schema), sql.Identifier(self.runtime_role)))
-        self.conn.execute(sql.SQL('GRANT INSERT,UPDATE ON telegram_link_codes TO {}').format(
+        self.conn.execute(sql.SQL('GRANT INSERT,UPDATE(revoked) ON telegram_link_codes TO {}').format(
             sql.Identifier(self.runtime_role)))
         self.assertTrue(self.probe(telegram_links=True)['ready'])
         self.conn.execute('DROP INDEX telegram_one_peer')
@@ -244,8 +247,22 @@ class DatabaseGatewayTests(Fixture):
         self.assertFalse(self.probe()['runtime_role_safe'])
 
     def test_missing_mutation_permission_is_not_ready(self):
-        self.conn.execute(sql.SQL('REVOKE UPDATE ON allowances FROM {}').format(sql.Identifier(self.runtime_role)))
-        report=self.probe();self.assertFalse(report['ready']);self.assertIn('allowances:UPDATE',report['insufficient_privileges'])
+        self.conn.execute(sql.SQL('REVOKE UPDATE(remaining) ON allowances FROM {}').format(sql.Identifier(self.runtime_role)))
+        report=self.probe();self.assertFalse(report['ready']);self.assertIn('allowances:UPDATE(remaining)',report['insufficient_privileges'])
+
+    def test_full_table_update_permission_is_refused_by_api_preflight(self):
+        self.conn.execute(sql.SQL('GRANT UPDATE ON accounts TO {}').format(
+            sql.Identifier(self.runtime_role)))
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('accounts:UPDATE_ALL', report['insufficient_privileges'])
+
+    def test_outbox_column_update_is_refused_even_without_table_grant(self):
+        self.conn.execute(sql.SQL('GRANT UPDATE(kind) ON notification_outbox TO {}').format(
+            sql.Identifier(self.runtime_role)))
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('notification_outbox:column_mutable', report['insufficient_privileges'])
 
     def test_audit_mutation_privileges_are_refused(self):
         self.conn.execute(sql.SQL('GRANT DELETE ON audit_events TO {}').format(sql.Identifier(self.runtime_role)))
@@ -255,7 +272,7 @@ class DatabaseGatewayTests(Fixture):
         self.assertFalse(self.probe(telegram_links=True)['ready'])
         self.conn.execute((Path(__file__).parents[1]/'telegram_schema.sql').read_text())
         self.conn.execute(sql.SQL('GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}').format(sql.Identifier(self.schema),sql.Identifier(self.runtime_role)))
-        self.conn.execute(sql.SQL('GRANT INSERT,UPDATE ON telegram_link_codes TO {}').format(sql.Identifier(self.runtime_role)))
+        self.conn.execute(sql.SQL('GRANT INSERT,UPDATE(revoked) ON telegram_link_codes TO {}').format(sql.Identifier(self.runtime_role)))
         self.assertTrue(self.probe(telegram_links=True)['ready'])
 
     def test_every_metadata_select_runs_inside_read_only_transaction(self):
