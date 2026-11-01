@@ -177,12 +177,37 @@ class TelegramTests(Fixture):
         self.restored();self.assertEqual(self.bot.fanout(),0);self.assertEqual(self.count('notification_outbox'),1)
         self.assertEqual(self.count('telegram_notification_batches'),0)
 
-    def test_restore_creates_real_sender_receipt_without_reason_leak(self):
+    def test_superadmin_receives_reason_only_on_private_delivery_not_in_queue(self):
         self.link('super_fixture',303);self.link('admin_fixture',202);booking=self.late()
-        self.command(f'/restore {booking} synthetic confidential reason',202);self.click('do:'+self.action(),202);self.bot.fanout();self.drain()
+        self.command(f'/restore {booking} synthetic confidential reason',202)
+        self.click('do:'+self.action(),202)
+        self.bot.fanout()
+        queued=self.conn.execute('SELECT payload FROM telegram_jobs WHERE outbox_id IS NOT NULL').fetchone()[0]
+        self.assertNotIn('confidential',str(queued))
+        self.drain()
         row=self.conn.execute('SELECT state,message_id,payload FROM telegram_jobs WHERE outbox_id IS NOT NULL').fetchone()
-        self.assertEqual(row[0],'delivered');self.assertIsInstance(row[1],int);self.assertNotIn('confidential',str(row[2]))
-        self.assertIn('Причина сохранена',row[2]['text']);self.assertEqual(self.remaining(),4)
+        self.assertEqual(row[0],'delivered');self.assertIsInstance(row[1],int)
+        self.assertNotIn('confidential',str(row[2]))
+        sent=[v for method,v,_ in self.api.sent if method=='sendMessage'
+              and 'Сеанс восстановлен' in v.get('text','')]
+        self.assertEqual(len(sent),1)
+        self.assertEqual(sent[0]['chat_id'],303)
+        self.assertTrue(sent[0]['protect_content'])
+        self.assertIn('Причина: synthetic confidential reason',sent[0]['text'])
+        self.assertEqual(self.remaining(),4)
+
+    def test_invalid_missing_audit_reason_never_gets_sent_to_superadmin(self):
+        self.link('super_fixture',303);self.drain();self.api.sent.clear()
+        event=self.conn.execute("""INSERT INTO audit_events(actor_id,operation,entity_id,at,details)
+            VALUES(%s,'restore_pool',17,clock_timestamp(),'{}'::jsonb)
+            RETURNING id""",(self.admin,)).fetchone()[0]
+        self.conn.execute("""INSERT INTO notification_outbox(event_id,recipient_role,kind,created_at)
+            VALUES(%s,'superadmin','session_restored',clock_timestamp())""",(event,))
+        self.assertEqual(self.bot.fanout(),1)
+        self.assertTrue(self.sender.send_one())
+        self.assertFalse(self.api.sent)
+        self.assertEqual(self.conn.execute(
+            'SELECT state FROM telegram_jobs WHERE outbox_id IS NOT NULL').fetchone()[0],'pending')
 
     def test_revoked_target_is_blocked_before_network(self):
         self.link('super_fixture',303);self.drain();self.api.sent.clear();self.restored();self.bot.fanout()
@@ -328,7 +353,11 @@ class TelegramTests(Fixture):
             delivery=self.conn.execute('SELECT state,message_id FROM telegram_jobs WHERE outbox_id IS NOT NULL').fetchone()
             self.assertEqual(delivery[0],'delivered');self.assertGreater(delivery[1],0)
             notification=next(v for m,v in requests if m=='sendMessage' and 'Сеанс восстановлен' in v['text'])
-            self.assertEqual(notification['chat_id'],303);self.assertNotIn('confidential',notification['text'])
+            self.assertEqual(notification['chat_id'],303)
+            self.assertIn('Причина: synthetic confidential reason',notification['text'])
+            self.assertTrue(notification['protect_content'])
+            queued=self.conn.execute('SELECT payload FROM telegram_jobs WHERE outbox_id IS NOT NULL').fetchone()[0]
+            self.assertNotIn('confidential',str(queued))
         finally:server.shutdown();server.server_close();thread.join(timeout=2)
 
     def test_multiple_superadmin_targets_keep_language(self):
@@ -337,7 +366,15 @@ class TelegramTests(Fixture):
         self.conn.execute('INSERT INTO credentials SELECT %s,%s,salt,verifier,1 FROM credentials LIMIT 1',(actor,'second_super_fixture'))
         self.link('second_super_fixture',404);self.command('/language uz',404);self.restored();self.assertEqual(self.bot.fanout(),2)
         rows=self.conn.execute('SELECT peer_id,payload FROM telegram_jobs WHERE outbox_id IS NOT NULL ORDER BY peer_id').fetchall()
-        self.assertIn('Сеанс восстановлен',rows[0][1]['text']);self.assertIn('Seans tiklandi',rows[1][1]['text'])
+        self.assertIn('Сеанс восстановлен',rows[0][1]['text'])
+        self.assertIn('Seans tiklandi',rows[1][1]['text'])
+        self.assertNotIn('confidential',str(rows))
+        self.drain()
+        notice_by_peer={v['chat_id']:v['text'] for method,v,_ in self.api.sent
+                        if method=='sendMessage' and ('Сеанс восстановлен' in v.get('text','')
+                            or 'Seans tiklandi' in v.get('text',''))}
+        self.assertIn('Причина: synthetic confidential reason',notice_by_peer[303])
+        self.assertIn('Sabab: synthetic confidential reason',notice_by_peer[404])
 
     def test_client_cannot_generate_other_client_qr(self):
         self.link('other_fixture',202);booking=self.book();self.now=accounting.START;uid=self.command('/qr '+str(booking),202);self.drain()
