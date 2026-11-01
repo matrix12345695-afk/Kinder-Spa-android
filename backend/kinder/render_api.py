@@ -211,7 +211,7 @@ def inspect_database(factory, schema, *, telegram_links=False):
                     JOIN pg_language l ON l.oid=p.prolang
                     WHERE n.nspname=%s AND c.relname=%s AND t.tgname=%s
                     AND NOT t.tgisinternal""", (schema, table, trigger)).fetchone()
-                body = re.sub(r'\\s+', ' ', row[5]).strip() if row else ''
+                body = re.sub(r'\s+', ' ', row[5]).strip() if row else ''
                 if (row is None or row[0] not in ('O','A')
                         or row[1] != tgtype or row[2] != function or row[3] != schema
                         or row[4] != (column or '')
