@@ -43,6 +43,13 @@ UPDATE_COLUMNS = {
     'auth_sessions': ('token_hash', 'revoked'),
     'login_buckets': ('attempts',),
 }
+# Exact expected, normalized PostgreSQL PL/pgSQL trigger bodies. A trigger
+# pointing to a function with the right name but a no-op body is NOT safe.
+IMMUTABLE_FUNCTION_BODIES = {
+    'immutable_audit': "BEGIN RAISE EXCEPTION 'audit is append-only'; END;",
+    'immutable_identifier': "BEGIN RAISE EXCEPTION 'identity column is immutable'; END;",
+}
+
 TELEGRAM_TABLES = (
     'telegram_link_codes', 'telegram_bindings', 'telegram_updates',
     'telegram_runtime', 'telegram_actions', 'telegram_notification_batches',
@@ -158,10 +165,24 @@ def inspect_database(factory, schema, *, telegram_links=False):
             if conn.execute("SELECT has_table_privilege(current_user,%s,'UPDATE')",
                             (relation[0],)).fetchone()[0]:
                 denied.append(name + ':UPDATE_ALL')
-            for column in UPDATE_COLUMNS.get(name, ()) + (('revoked',) if telegram_links and name == 'telegram_link_codes' else ()):
-                if not conn.execute("SELECT has_column_privilege(current_user,%s,%s,'UPDATE')",
-                                    (relation[0], column)).fetchone()[0]:
-                    denied.append(name + ':UPDATE(' + column + ')')
+            allowed_updates = set(UPDATE_COLUMNS.get(name, ()))
+            if telegram_links and name == 'telegram_link_codes':
+                allowed_updates.add('revoked')
+            actual_updates = {row[0] for row in conn.execute(
+                """SELECT a.attname FROM pg_attribute a
+                   WHERE a.attrelid=%s AND a.attnum>0 AND NOT a.attisdropped
+                   AND has_column_privilege(current_user,a.attrelid,a.attnum,'UPDATE')""",
+                (relation[0],)).fetchall()}
+            for column in sorted(allowed_updates - actual_updates):
+                denied.append(name + ':UPDATE(' + column + ')')
+            for column in sorted(actual_updates - allowed_updates):
+                denied.append(name + ':UPDATE(' + column + '):excess')
+            for privilege in ('DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'):
+                if privilege == 'DELETE' and name == 'login_buckets':
+                    continue
+                if conn.execute('SELECT has_table_privilege(current_user,%s,%s)',
+                                (relation[0], privilege)).fetchone()[0]:
+                    denied.append(name + ':' + privilege + ':excess')
             if name in ('audit_events', 'notification_outbox'):
                 if conn.execute("SELECT has_table_privilege(current_user,%s,'UPDATE,DELETE,TRUNCATE')",
                                 (relation[0],)).fetchone()[0]:
@@ -179,17 +200,24 @@ def inspect_database(factory, schema, *, telegram_links=False):
                 row = conn.execute("""SELECT t.tgenabled,t.tgtype,p.proname,pn.nspname,
                         coalesce((SELECT string_agg(a.attname, ',' ORDER BY a.attname)
                             FROM pg_attribute a WHERE a.attrelid=c.oid
-                            AND a.attnum=ANY(t.tgattr::int2[])), '')
+                            AND a.attnum=ANY(t.tgattr::int2[])), ''),
+                        p.prosrc,l.lanname,p.prosecdef,p.prokind,p.pronargs,
+                        p.prorettype='pg_catalog.trigger'::regtype
                     FROM pg_trigger t
                     JOIN pg_class c ON c.oid=t.tgrelid
                     JOIN pg_namespace n ON n.oid=c.relnamespace
                     JOIN pg_proc p ON p.oid=t.tgfoid
                     JOIN pg_namespace pn ON pn.oid=p.pronamespace
+                    JOIN pg_language l ON l.oid=p.prolang
                     WHERE n.nspname=%s AND c.relname=%s AND t.tgname=%s
                     AND NOT t.tgisinternal""", (schema, table, trigger)).fetchone()
+                body = re.sub(r'\\s+', ' ', row[5]).strip() if row else ''
                 if (row is None or row[0] not in ('O','A')
                         or row[1] != tgtype or row[2] != function or row[3] != schema
-                        or row[4] != (column or '')):
+                        or row[4] != (column or '')
+                        or body != IMMUTABLE_FUNCTION_BODIES[function]
+                        or row[6] != 'plpgsql' or row[7] or row[8] != 'f'
+                        or row[9] != 0 or not row[10]):
                     missing_safety.append(table + ':' + trigger)
             indexes = REQUIRED_INDEXES | (TELEGRAM_REQUIRED_INDEXES if telegram_links else {})
             for index, (table, unique) in indexes.items():
