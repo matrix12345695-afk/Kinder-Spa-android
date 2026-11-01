@@ -207,7 +207,7 @@ class TelegramTests(Fixture):
         self.assertTrue(self.sender.send_one())
         self.assertFalse(self.api.sent)
         self.assertEqual(self.conn.execute(
-            'SELECT state FROM telegram_jobs WHERE outbox_id IS NOT NULL').fetchone()[0],'pending')
+            'SELECT state FROM telegram_jobs WHERE outbox_id IS NOT NULL').fetchone()[0],'failed')
 
     def test_revoked_target_is_blocked_before_network(self):
         self.link('super_fixture',303);self.drain();self.api.sent.clear();self.restored();self.bot.fanout()
