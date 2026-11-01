@@ -202,6 +202,50 @@ class DatabaseGatewayTests(Fixture):
         self.assertIn('audit_events:audit_no_update', report['missing_safety_objects'])
         self.assertEqual(self.request('GET', '/health')[:2], (503, {'error':'not_ready'}))
 
+    def test_replaced_audit_function_refuses_api_even_if_trigger_exists(self):
+        # A matching trigger name alone does not prove an immutable audit log.
+        self.conn.execute("""CREATE OR REPLACE FUNCTION immutable_audit()
+            RETURNS trigger LANGUAGE plpgsql AS $body$
+            BEGIN RETURN OLD; END;
+            $body$""")
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('audit_events:audit_no_update', report['missing_safety_objects'])
+        self.assertIn('notification_outbox:notification_outbox_no_update',
+                      report['missing_safety_objects'])
+
+    def test_replaced_identity_function_refuses_api_preflight(self):
+        self.conn.execute("""CREATE OR REPLACE FUNCTION immutable_identifier()
+            RETURNS trigger LANGUAGE plpgsql AS $body$
+            BEGIN RETURN NEW; END;
+            $body$""")
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('accounts:accounts_id_immutable', report['missing_safety_objects'])
+        self.assertIn('credentials:credentials_account_immutable',
+                      report['missing_safety_objects'])
+
+    def test_extra_update_column_on_bookings_refuses_startup(self):
+        self.conn.execute(sql.SQL('GRANT UPDATE(ends_at) ON bookings TO {}').format(
+            sql.Identifier(self.runtime_role)))
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('bookings:UPDATE(ends_at):excess', report['insufficient_privileges'])
+
+    def test_extra_delete_on_bookings_refuses_startup(self):
+        self.conn.execute(sql.SQL('GRANT DELETE ON bookings TO {}').format(
+            sql.Identifier(self.runtime_role)))
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('bookings:DELETE:excess', report['insufficient_privileges'])
+
+    def test_extra_trigger_privilege_on_accounts_refuses_startup(self):
+        self.conn.execute(sql.SQL('GRANT TRIGGER ON accounts TO {}').format(
+            sql.Identifier(self.runtime_role)))
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('accounts:TRIGGER:excess', report['insufficient_privileges'])
+
     def test_disabled_outbox_trigger_cannot_pass_api_readiness(self):
         self.conn.execute('ALTER TABLE notification_outbox DISABLE TRIGGER notification_outbox_no_update')
         report = self.probe()
