@@ -198,7 +198,7 @@ class Sender:
                     # instructions embedded in staff-entered free text.
                     reason = ' '.join(row[0].split())
                     label = 'Sabab: ' if who['language']=='uz' else 'Причина: '
-                    notification_text = job['payload']['text'] + '\\n' + label + reason
+                    notification_text = job['payload']['text'] + '\n' + label + reason
                 if photo:
                     response=self.api.call('sendPhoto',{'chat_id':job['peer'],'caption':tr('qr',who['language'])%seconds,'protect_content':'true'},photo=photo)
                 else:
