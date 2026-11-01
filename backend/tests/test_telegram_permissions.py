@@ -206,6 +206,12 @@ class TelegramRuntimeRoleTests(Fixture):
         self.assertEqual(result[0], 'delivered')
         self.assertGreater(result[1], 0)
         self.assertNotIn('staff reason', str(result[2]))
+        notifications=[value for method,value,_ in fake.sent
+                       if method=='sendMessage' and 'Сеанс восстановлен' in value.get('text','')]
+        self.assertEqual(len(notifications),1)
+        self.assertEqual(notifications[0]['chat_id'],303)
+        self.assertTrue(notifications[0]['protect_content'])
+        self.assertIn('Причина: synthetic staff reason',notifications[0]['text'])
         self.assertEqual(self.conn.execute('SELECT count(*) FROM notification_outbox').fetchone()[0], 1)
 
     def test_worker_can_configure_and_poll_empty_synthetic_queue(self):
