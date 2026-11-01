@@ -199,7 +199,7 @@ class TelegramTests(Fixture):
     def test_invalid_missing_audit_reason_never_gets_sent_to_superadmin(self):
         self.link('super_fixture',303);self.drain();self.api.sent.clear()
         event=self.conn.execute("""INSERT INTO audit_events(actor_id,operation,entity_id,at,details)
-            VALUES(%s,'restore_pool',17,clock_timestamp(),'{}'::jsonb)
+            VALUES(%s,'restore_pool',17,clock_timestamp(),'{"remaining":4}'::jsonb)
             RETURNING id""",(self.admin,)).fetchone()[0]
         self.conn.execute("""INSERT INTO notification_outbox(event_id,recipient_role,kind,created_at)
             VALUES(%s,'superadmin','session_restored',clock_timestamp())""",(event,))
