@@ -18,17 +18,30 @@ from .telegram_runner import connection_factory, database_transport
 
 
 TABLES = {
-    'accounts': 'SELECT,INSERT,UPDATE',
-    'subscriptions': 'SELECT,INSERT,UPDATE',
-    'allowances': 'SELECT,INSERT,UPDATE',
-    'bookings': 'SELECT,INSERT,UPDATE',
-    'qr_tokens': 'SELECT,INSERT,UPDATE',
-    'operations': 'SELECT,INSERT,UPDATE',
+    'accounts': 'SELECT,INSERT',
+    'subscriptions': 'SELECT,INSERT',
+    'allowances': 'SELECT,INSERT',
+    'bookings': 'SELECT,INSERT',
+    'qr_tokens': 'SELECT,INSERT',
+    'operations': 'SELECT,INSERT',
     'audit_events': 'SELECT,INSERT',
     'notification_outbox': 'SELECT,INSERT',
-    'credentials': 'SELECT,INSERT,UPDATE',
-    'auth_sessions': 'SELECT,INSERT,UPDATE',
-    'login_buckets': 'SELECT,INSERT,UPDATE,DELETE',
+    'credentials': 'SELECT,INSERT',
+    'auth_sessions': 'SELECT,INSERT',
+    'login_buckets': 'SELECT,INSERT,DELETE',
+}
+# Required column-granular UPDATE, including specific row-lock-only identifiers.
+# A whole-table UPDATE is deliberately NOT accepted for any table.
+UPDATE_COLUMNS = {
+    'accounts': ('id',),
+    'subscriptions': ('id',),
+    'allowances': ('remaining',),
+    'bookings': ('state',),
+    'qr_tokens': ('used_at', 'revoked'),
+    'operations': ('result',),
+    'credentials': ('account_id', 'salt', 'verifier', 'version'),
+    'auth_sessions': ('token_hash', 'revoked'),
+    'login_buckets': ('attempts',),
 }
 TELEGRAM_TABLES = (
     'telegram_link_codes', 'telegram_bindings', 'telegram_updates',
@@ -108,7 +121,7 @@ def inspect_database(factory, schema, *, telegram_links=False):
     required = dict(TABLES)
     if telegram_links:
         required.update({name: 'SELECT' for name in TELEGRAM_TABLES})
-        required['telegram_link_codes'] = 'SELECT,INSERT,UPDATE'
+        required['telegram_link_codes'] = 'SELECT,INSERT'
     with factory() as conn, conn.transaction():
         conn.execute('SET TRANSACTION READ ONLY')
         conn.execute("SET LOCAL statement_timeout TO '1500ms'")
@@ -138,9 +151,27 @@ def inspect_database(factory, schema, *, telegram_links=False):
             for privilege in privileges.split(','):
                 if not conn.execute('SELECT has_table_privilege(current_user,%s,%s)', (relation[0], privilege)).fetchone()[0]:
                     denied.append(name + ':' + privilege)
-            if name == 'audit_events' and conn.execute(
-                    "SELECT has_table_privilege(current_user,%s,'UPDATE,DELETE,TRUNCATE')", (relation[0],)).fetchone()[0]:
-                denied.append('audit_events:mutable')
+            # Scoped UPDATE can satisfy row locks without broad data mutation.
+            # These explicit checks fail closed even if an operator accidentally
+            # grants the API role table-wide UPDATE or more than the intended
+            # column set. PostgreSQL ownership/role membership is checked above.
+            if conn.execute("SELECT has_table_privilege(current_user,%s,'UPDATE')",
+                            (relation[0],)).fetchone()[0]:
+                denied.append(name + ':UPDATE_ALL')
+            for column in UPDATE_COLUMNS.get(name, ()) + (('revoked',) if telegram_links and name == 'telegram_link_codes' else ()):
+                if not conn.execute("SELECT has_column_privilege(current_user,%s,%s,'UPDATE')",
+                                    (relation[0], column)).fetchone()[0]:
+                    denied.append(name + ':UPDATE(' + column + ')')
+            if name in ('audit_events', 'notification_outbox'):
+                if conn.execute("SELECT has_table_privilege(current_user,%s,'UPDATE,DELETE,TRUNCATE')",
+                                (relation[0],)).fetchone()[0]:
+                    denied.append(name + ':mutable')
+                if conn.execute("""SELECT EXISTS (
+                      SELECT 1 FROM pg_attribute a
+                      WHERE a.attrelid=%s AND a.attnum>0 AND NOT a.attisdropped
+                      AND has_column_privilege(current_user,a.attrelid,a.attnum,'UPDATE'))""",
+                      (relation[0],)).fetchone()[0]:
+                    denied.append(name + ':column_mutable')
 
         missing_safety = []
         if present:
