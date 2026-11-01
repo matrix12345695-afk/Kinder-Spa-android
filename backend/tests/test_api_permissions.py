@@ -81,10 +81,16 @@ class ApiRuntimeRoleTests(Fixture):
              'starts_at':START.isoformat(),'minutes':45,'key':'api-role-book'},
             token=admin_token)
         self.assertEqual(status, 201, booking)
+        self.now = START
+        # A session issued before the booking window has correctly expired.
+        # Authenticate both parties again at the attendance time.
+        status, staff, _ = self.call('POST','/v1/login',
+            {'login':'admin_fixture','password':PASSWORD})
+        self.assertEqual(status, 200, staff)
+        admin_token = staff['access_token']
         status, customer, _ = self.call('POST','/v1/login',
             {'login':'other_fixture','password':PASSWORD})
         self.assertEqual(status, 200, customer)
-        self.now = START
         status, qr, _ = self.call('POST',
             '/v1/bookings/' + str(booking['booking_id']) + '/qr', {},
             token=customer['access_token'])
