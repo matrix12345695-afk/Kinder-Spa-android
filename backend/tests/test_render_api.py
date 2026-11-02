@@ -246,6 +246,41 @@ class DatabaseGatewayTests(Fixture):
         self.assertFalse(report['ready'])
         self.assertIn('accounts:TRIGGER:excess', report['insufficient_privileges'])
 
+    def test_missing_pool_booking_foreign_key_refuses_api_readiness(self):
+        self.conn.execute('ALTER TABLE bookings DROP CONSTRAINT bookings_subscription_id_category_fkey')
+        result = self.probe()
+        self.assertFalse(result['ready'])
+        self.assertIn('bookings:bookings_subscription_id_category_fkey',
+                      result['missing_safety_objects'])
+        self.assertEqual(self.request('GET', '/health')[:2], (503, {'error':'not_ready'}))
+
+    def test_missing_unique_booking_time_refuses_api_readiness(self):
+        self.conn.execute('ALTER TABLE bookings DROP CONSTRAINT bookings_subscription_id_starts_at_key')
+        result = self.probe()
+        self.assertFalse(result['ready'])
+        self.assertIn('bookings:bookings_subscription_id_starts_at_key',
+                      result['missing_safety_objects'])
+
+    def test_unvalidated_session_account_foreign_key_refuses_api_readiness(self):
+        self.conn.execute('ALTER TABLE auth_sessions DROP CONSTRAINT auth_sessions_account_id_fkey')
+        self.conn.execute('''ALTER TABLE auth_sessions
+            ADD CONSTRAINT auth_sessions_account_id_fkey
+            FOREIGN KEY (account_id) REFERENCES credentials(account_id) NOT VALID''')
+        result = self.probe()
+        self.assertFalse(result['ready'])
+        self.assertIn('auth_sessions:auth_sessions_account_id_fkey',
+                      result['missing_safety_objects'])
+
+    def test_qr_foreign_key_cannot_be_replaced_by_wrong_target(self):
+        self.conn.execute('ALTER TABLE qr_tokens DROP CONSTRAINT qr_tokens_booking_id_fkey')
+        self.conn.execute('''ALTER TABLE qr_tokens
+            ADD CONSTRAINT qr_tokens_booking_id_fkey
+            FOREIGN KEY (booking_id) REFERENCES accounts(id) NOT VALID''')
+        result = self.probe()
+        self.assertFalse(result['ready'])
+        self.assertIn('qr_tokens:qr_tokens_booking_id_fkey',
+                      result['missing_safety_objects'])
+
     def test_disabled_outbox_trigger_cannot_pass_api_readiness(self):
         self.conn.execute('ALTER TABLE notification_outbox DISABLE TRIGGER notification_outbox_no_update')
         report = self.probe()
