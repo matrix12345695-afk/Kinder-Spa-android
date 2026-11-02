@@ -20,12 +20,13 @@ A free Render web service is suitable for this **nonproduction smoke test**, not
 
 - Existing `kinder-spa-db`: `dpg-dbbtkol9fdbs73a7tvqg-a`, region Frankfurt, Postgres 18, paid `0.1c-256mb`, available, external IP allowlist empty. This is a **metadata check**, not a backup check.
 - Render's SQL connector cannot query the database because its external IP allowlist is empty; **do not loosen the allowlist** for the hosted connector.
-- Render paid PostgreSQL is normally covered by PITR per official docs. Actual available points and recovery success for **this particular instance** remain unverified.
-- Restore requires a separate database instance and can incur charges; no restore was triggered.
+- **PITR availability confirmed by owner-provided Render Recovery screenshot on 2 November 2026:** the database page shows **Point-in-Time Recovery**, offering timestamps within the previous **3 days**, and the **Restore database** action. The screenshot does **not** identify a particular recovered timestamp or prove that restoration actually succeeds.
+- **Recovery execution NOT VERIFIED**. No `Restore database` action, recovered instance, logical export, or paid tier upgrade was performed. A point-in-time restore typically provisions a separate billable database; get exact cost and approval before beginning.
+- The 3-day window is rolling. Immediately before any authorized schema mutation, recheck availability for a point just before migration. This 2 November screenshot does not guarantee a later recovery point.
 
 ## Owner's read-only Recovery check
 
-Open Render Dashboard → `kinder-spa-db` → **Recovery**. Without clicking `Restore Database` or `Create Export`, inspect whether Point-in-Time Recovery is offered, its earliest available recoverable time and retention. Record the current plan and available window. Do not reveal connection strings, credentials, full customer data or exported backup contents in screenshots. Do not trigger a paid recovery instance.
+**Completed on 2 November 2026 (availability check only):** Owner supplied a screenshot of Render → `kinder-spa-db` → **Recovery** showing a 3-day PITR window. There was no restore and no confirmed recovered copy. Before requesting any production DDL, obtain a fresh screenshot of the window, an approved recovery plan, and separately approved billable test restore if required. Do not reveal connection strings or execute `Restore database` without distinct authorization.
 
 Official docs:
 - https://render.com/docs/postgresql-backups
