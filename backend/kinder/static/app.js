@@ -18,10 +18,13 @@ const ERRORS = {
   items_required: 'Добавьте хотя бы одну услугу', duplicate_service: 'Услуга повторяется', client_archived: 'Клиент в архиве',
   plan_not_found: 'Тариф не найден', client_not_found: 'Клиент не найден', unsupported_image: 'Только JPG, PNG или WEBP',
   invalid_image: 'Файл не похож на изображение', image_too_large: 'Фото больше 2 МБ', too_many_photos: 'Не больше 10 фото',
+  overpayment: 'Сумма больше долга по абонементу', already_voided: 'Оплата уже отменена',
+  void_needs_superadmin: 'Отменить можно только свою оплату за сегодня; остальные — главный администратор',
   cannot_disable_self: 'Нельзя отключить самого себя', wrong_current_password: 'Текущий пароль неверный',
   password_length: 'Пароль должен быть от 8 символов', invalid_period: 'Некорректный период', busy_retry: 'База занята, повторите',
   internal_error: 'Ошибка сервера', network: 'Нет связи с сервером', specialist_not_found: 'Специалист не найден',
 };
+const METHODS = { cash: 'Наличные', card: 'Карта', click: 'Click', payme: 'Payme', transfer: 'Перевод' };
 const STATES = { active: 'Активен', frozen: 'Заморожен', closed: 'Закрыт', expired: 'Истёк', used_up: 'Использован', not_started: 'Не начался' };
 const ACTIONS = {
   create_client: 'Новый клиент', update_client: 'Изменение клиента', create_child: 'Добавлен ребёнок', update_child: 'Изменение ребёнка',
@@ -30,6 +33,7 @@ const ACTIONS = {
   adjust: 'Корректировка', close: 'Закрытие', create_staff: 'Новый сотрудник', update_staff: 'Изменение сотрудника',
   reset_password: 'Сброс пароля', change_password: 'Смена пароля', create_service: 'Новая услуга', update_service: 'Изменение услуги',
   add_photo: 'Добавлено фото', delete_photo: 'Удалено фото', create_specialist: 'Новый специалист', update_specialist: 'Изменение специалиста',
+  payment: 'Оплата', void_payment: 'Отмена оплаты', telegram_link: 'Вход в Telegram-бот',
   create_plan: 'Новый тариф', update_plan: 'Изменение тарифа', bootstrap_superadmin: 'Создан главный администратор',
 };
 
@@ -163,7 +167,7 @@ function renderLogin() {
 }
 
 const PAGES = [
-  ['today', 'Сегодня'], ['scan', 'Сканер QR'], ['clients', 'Клиенты'], ['subscriptions', 'Абонементы'], ['visits', 'Посещения'],
+  ['today', 'Сегодня'], ['scan', 'Сканер QR'], ['clients', 'Клиенты'], ['subscriptions', 'Абонементы'], ['visits', 'Посещения'], ['cash', 'Касса'],
   ['services', 'Услуги'], ['specialists', 'Специалисты'], ['plans', 'Тарифы'], ['reports', 'Отчёты'],
   ['staff', 'Сотрудники', 'superadmin'], ['audit', 'Журнал'],
 ];
@@ -199,7 +203,7 @@ function go(page, arg) {
   const main = $('#main');
   main.append(h('div', { class: 'muted' }, 'Загрузка…'));
   const render = { today: pageToday, scan: pageScan, clients: pageClients, client: pageClient, subscriptions: pageSubscriptions,
-    visits: pageVisits, services: pageServices, specialists: pageSpecialists, plans: pagePlans, reports: pageReports, staff: pageStaff, audit: pageAudit }[page] || pageToday;
+    visits: pageVisits, cash: pageCash, services: pageServices, specialists: pageSpecialists, plans: pagePlans, reports: pageReports, staff: pageStaff, audit: pageAudit }[page] || pageToday;
   Promise.resolve(render(main, arg)).catch((e) => { main.replaceChildren(h('div', { class: 'card' }, errText(e))); });
 }
 async function start() {
@@ -215,6 +219,7 @@ async function start() {
 async function pageToday(main) {
   const [rep, expiring, visits] = await Promise.all([
     api('GET', `/reports?from=${todayISO()}&to=${todayISO()}`), api('GET', '/subscriptions?state=expiring'), api('GET', '/visits')]);
+  const cashToday = rep.received.total;
   const t = rep.totals;
   main.replaceChildren(
     h('div', { class: 'row between' }, h('h1', {}, 'Сегодня, ' + new Date().toLocaleDateString('ru-RU', { timeZone: 'Asia/Tashkent', day: 'numeric', month: 'long' })),
@@ -222,7 +227,7 @@ async function pageToday(main) {
         h('button', { class: 'btn', onclick: () => newClient() }, '+ Клиент'))),
     h('div', { class: 'grid stats' },
       stat(t.visits_today, 'посещений сегодня'), stat(t.active_subscriptions, 'активных абонементов'),
-      stat(t.frozen_subscriptions, 'заморожено'), stat(t.clients, 'клиентов')),
+      stat(fmtMoney(cashToday), 'касса сегодня'), stat(fmtMoney(rep.debt_total), 'долг клиентов'), stat(t.clients, 'клиентов')),
     h('div', { class: 'grid two' },
       h('div', { class: 'card' }, h('h2', {}, 'Посещения сегодня'), visitsTable(visits, { compact: true, onChange: () => go('today') })),
       h('div', { class: 'card' }, h('h2', {}, 'Заканчиваются (7 дней или ≤1 визит)'), subsTable(expiring))));
@@ -344,9 +349,10 @@ function subCard(s, kids, specialists, reload) {
   const live = s.state === 'active';
   return h('div', { class: 'sub' + (['closed', 'expired', 'used_up'].includes(s.state) ? ' inactive' : '') },
     h('div', { class: 'row between' }, h('div', {}, h('b', {}, s.name), ' ', badge(s.state), s.child_name ? h('span', { class: 'muted' }, ' · для ', s.child_name) : null),
-      h('div', { class: 'muted small' }, fmtDate(s.starts_on), ' — ', fmtDate(s.ends_on), s.frozen_since ? ` · заморожен с ${fmtDate(s.frozen_since)}` : '', ' · ', fmtMoney(s.price))),
+      h('div', { class: 'muted small' }, fmtDate(s.starts_on), ' — ', fmtDate(s.ends_on), s.frozen_since ? ` · заморожен с ${fmtDate(s.frozen_since)}` : '', ' · ', fmtMoney(s.price), ' ', payBadge(s))),
     itemsView(s.items),
     h('div', { class: 'row' },
+      Number(s.debt) > 0 ? h('button', { class: 'btn small primary', onclick: () => takePayment(s, reload) }, 'Принять оплату') : null,
       live ? h('button', { class: 'btn primary small', onclick: () => markVisit(s, kids, specialists, reload) }, 'Отметить посещение') : null,
       s.status === 'active' && s.state !== 'expired' ? h('button', { class: 'btn small', onclick: () => askReason('Заморозить абонемент', null, async (d) => { await api('POST', `/subscriptions/${s.id}/freeze`, d); toast('Заморожен'); reload(); }) }, 'Заморозить') : null,
       s.status === 'frozen' ? h('button', { class: 'btn small', onclick: () => guard(async () => { const r = await api('POST', `/subscriptions/${s.id}/unfreeze`); toast(r.frozen_days ? `Разморожен, срок продлён на ${r.frozen_days} дн.` : 'Разморожен'); reload(); }) }, 'Разморозить') : null,
@@ -359,11 +365,54 @@ function subCard(s, kids, specialists, reload) {
       h('button', { class: 'btn small', onclick: () => subHistory(s.id) }, 'История'),
       s.status !== 'closed' ? h('button', { class: 'btn small danger', onclick: () => askReason('Закрыть абонемент', h('p', { class: 'muted' }, 'Закрытый абонемент нельзя использовать.'), async (d) => { await api('POST', `/subscriptions/${s.id}/close`, d); toast('Закрыт'); reload(); }) }, 'Закрыть') : null));
 }
+function payBadge(s) {
+  if (Number(s.price) === 0) return null;
+  return Number(s.debt) > 0 ? h('span', { class: 'badge bad' }, 'долг ', fmtMoney(s.debt)) : h('span', { class: 'badge active' }, 'оплачен');
+}
+function takePayment(s, done) {
+  modal('Принять оплату — ' + s.name, h('div', { class: 'stack' },
+    h('p', { class: 'muted' }, `Цена ${fmtMoney(s.price)}, оплачено ${fmtMoney(s.paid)}, долг `, h('b', {}, fmtMoney(s.debt))),
+    h('div', { class: 'row' }, field('Сумма, сум', h('input', { name: 'amount', type: 'number', min: 1, step: '0.01', max: s.debt, value: s.debt, required: true })),
+      field('Способ', methodSelect('method'))),
+    field('Комментарий', h('input', { name: 'note', maxlength: 300 }))),
+  { okText: 'Принять', onOk: async (f) => { const d = readForm(f); const r = await api('POST', `/subscriptions/${s.id}/payments`, d); toast(Number(r.debt) > 0 ? `Оплата принята, долг ${fmtMoney(r.debt)}` : 'Оплачено полностью'); done(); } });
+}
+function methodSelect(name) { return h('select', { name }, Object.entries(METHODS).map(([k, v]) => h('option', { value: k }, v))); }
+function voidPayment(p, done) {
+  askReason(`Отменить оплату ${fmtMoney(p.amount)}?`, h('p', { class: 'muted' }, 'Оплата останется в журнале как отменённая, долг вернётся.'),
+    async (d) => { await api('POST', `/payments/${p.id}/void`, d); toast('Оплата отменена'); done(); });
+}
+function paymentsTable(rows, { onChange, hideClient } = {}) {
+  if (!rows.length) return h('div', { class: 'empty' }, 'Оплат нет');
+  return h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Когда'), hideClient ? null : h('th', {}, 'Клиент'), h('th', {}, 'Сумма'), h('th', {}, 'Способ'), h('th', {}, 'Принял'), h('th', {}, ''))),
+    h('tbody', {}, rows.map((p) => h('tr', { class: p.voided_at ? 'cancelled' : '' },
+      h('td', { class: 'small' }, fmtDateTime(p.paid_at)),
+      hideClient ? null : h('td', {}, h('a', { href: '#client/' + p.client_id, onclick: (e) => { e.preventDefault(); go('client', p.client_id); } }, p.client_name), h('div', { class: 'small muted' }, p.subscription_name)),
+      h('td', { class: 'num' }, fmtMoney(p.amount)), h('td', {}, METHODS[p.method] || p.method, p.note ? h('div', { class: 'small muted' }, p.note) : null),
+      h('td', { class: 'small' }, p.staff_name),
+      h('td', {}, p.voided_at ? h('span', { class: 'small muted', title: p.void_reason || '' }, 'отменена') : h('button', { class: 'btn small danger', onclick: () => voidPayment(p, onChange) }, 'Отменить')))))));
+}
+async function pageCash(main) {
+  const from = h('input', { type: 'date', value: state.cache.cFrom || todayISO() });
+  const to = h('input', { type: 'date', value: state.cache.cTo || todayISO() });
+  const box = h('div', {});
+  const load = async () => {
+    state.cache.cFrom = from.value; state.cache.cTo = to.value;
+    const r = await api('GET', `/payments?from=${from.value}&to=${to.value}`);
+    box.replaceChildren(h('div', { class: 'grid stats' }, stat(fmtMoney(r.total), 'всего получено'),
+      ...Object.entries(METHODS).filter(([k]) => Number(r.by_method[k]) > 0).map(([k, v]) => stat(fmtMoney(r.by_method[k]), v))),
+    h('div', { class: 'card' }, paymentsTable(r.payments, { onChange: load })));
+  };
+  [from, to].forEach((el) => el.addEventListener('change', () => guard(load)));
+  main.replaceChildren(h('h1', {}, 'Касса'), h('div', { class: 'card row' }, field('С', from), field('По', to)), box);
+  await load();
+}
 async function subHistory(id) {
   const s = await guard(() => api('GET', '/subscriptions/' + id));
-  modal('История: ' + s.name, h('div', { class: 'table-wrap' }, h('table', {}, h('tbody', {}, s.history.map((e) => h('tr', {},
+  const close = () => $('#modal-root').replaceChildren();
+  modal('История: ' + s.name, h('div', { class: 'stack' }, h('h3', {}, 'Оплаты'), paymentsTable(s.payments, { hideClient: true, onChange: () => { close(); go(state.page, $('#main') && state.key.split('/')[1]); } }), h('h3', {}, 'Действия'), h('div', { class: 'table-wrap' }, h('table', {}, h('tbody', {}, s.history.map((e) => h('tr', {},
     h('td', { class: 'small muted' }, fmtDateTime(e.at)), h('td', {}, ACTIONS[e.action] || e.action, e.details && e.details.reason ? h('div', { class: 'small muted' }, e.details.reason) : null),
-    h('td', { class: 'small' }, e.actor || '—')))))), { hideOk: true, cancelText: 'Закрыть' });
+    h('td', { class: 'small' }, e.actor || '—'))))))), { hideOk: true, cancelText: 'Закрыть' });
 }
 function newSubscription(c, plans, services, done) {
   const activePlans = plans.filter((p) => p.active);
@@ -377,16 +426,20 @@ function newSubscription(c, plans, services, done) {
   const planSel = h('select', { name: 'plan_id', onchange: () => {
     custom.classList.toggle('hidden', planSel.value !== 'custom');
     const p = activePlans.find((x) => String(x.id) === planSel.value);
-    price.value = p ? p.price : '';
+    price.value = p ? p.price : ''; paidNow.value = price.value;
   } }, activePlans.map((p) => h('option', { value: p.id }, `${p.name} — ${p.items.map((i) => i.visits + ' × ' + i.name_ru).join(', ')}, ${p.validity_days} дн.`)), h('option', { value: 'custom' }, 'Индивидуальный (вручную)…'));
   const price = h('input', { name: 'price', type: 'number', min: 0, step: '0.01', value: activePlans[0] ? activePlans[0].price : '' });
+  const paidNow = h('input', { name: 'paid_amount', type: 'number', min: 0, step: '0.01', value: activePlans[0] ? activePlans[0].price : '' });
+  price.addEventListener('input', () => { paidNow.value = price.value; });
   modal('Новый абонемент — ' + c.full_name, h('div', { class: 'stack' },
     field('Тариф', planSel), custom,
     field('Для ребёнка', h('select', { name: 'child_id' }, h('option', { value: '' }, 'Любой ребёнок семьи'), kids.map((k) => h('option', { value: k.id }, k.full_name)))),
-    h('div', { class: 'row' }, field('Начало', h('input', { name: 'starts_on', type: 'date', value: todayISO() })), field('Цена, сум', price))),
+    h('div', { class: 'row' }, field('Начало', h('input', { name: 'starts_on', type: 'date', value: todayISO() })), field('Цена, сум', price)),
+    h('div', { class: 'row' }, field('Оплачено сейчас, сум', paidNow), field('Способ оплаты', methodSelect('paid_method')))),
   { okText: 'Оформить', onOk: async (f) => {
     const d = readForm(f);
-    const body = { client_id: c.id, child_id: d.child_id ? Number(d.child_id) : null, starts_on: d.starts_on, price: d.price === '' ? null : d.price };
+    const body = { client_id: c.id, child_id: d.child_id ? Number(d.child_id) : null, starts_on: d.starts_on, price: d.price === '' ? null : d.price,
+      paid_amount: d.paid_amount && Number(d.paid_amount) > 0 ? d.paid_amount : null, paid_method: d.paid_method };
     if (d.plan_id === 'custom') {
       body.name = d.name; body.validity_days = Number(d.validity_days);
       body.items = [...f.querySelectorAll('[data-svc]')].filter((x) => x.checked).map((x) => ({ service_id: Number(x.dataset.svc), visits: Number(f.querySelector(`[data-visits="${x.dataset.svc}"]`).value) }));
@@ -438,10 +491,10 @@ function subsTable(rows) {
   return h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Клиент'), h('th', {}, 'Абонемент'), h('th', {}, 'Остаток'), h('th', {}, 'До'), h('th', {}, 'Статус'))),
     h('tbody', {}, rows.map((s) => h('tr', { class: 'click', onclick: () => go('client', s.client_id) },
       h('td', {}, h('b', {}, s.client_name), s.child_name ? h('div', { class: 'small muted' }, s.child_name) : null), h('td', {}, s.name),
-      h('td', {}, s.items.map((i) => `${i.name_ru}: ${i.remaining}/${i.quota}`).join(', ')), h('td', {}, fmtDate(s.ends_on)), h('td', {}, badge(s.state)))))));
+      h('td', {}, s.items.map((i) => `${i.name_ru}: ${i.remaining}/${i.quota}`).join(', ')), h('td', {}, fmtDate(s.ends_on)), h('td', {}, badge(s.state), ' ', payBadge(s)))))));
 }
 async function pageSubscriptions(main) {
-  const tabs = [['expiring', 'Заканчиваются'], ['frozen', 'Заморожены'], ['', 'Все действующие']];
+  const tabs = [['expiring', 'Заканчиваются'], ['debt', 'С долгом'], ['frozen', 'Заморожены'], ['', 'Все действующие']];
   let current = state.cache.subTab ?? 'expiring';
   const box = h('div', {});
   const bar = h('div', { class: 'row' });
@@ -659,7 +712,9 @@ async function pageReports(main) {
     const total = r.by_service.reduce((a, x) => a + Number(x.visits), 0);
     const maxDay = Math.max(1, ...r.by_day.map((d) => d.visits));
     box.replaceChildren(
-      h('div', { class: 'grid stats' }, stat(total, 'посещений за период'), stat(r.sold.count, 'абонементов продано'), stat(fmtMoney(r.sold.revenue), 'выручка по абонементам'), stat(r.totals.active_subscriptions, 'активных сейчас')),
+      h('div', { class: 'grid stats' }, stat(total, 'посещений за период'), stat(r.sold.count, 'абонементов продано'), stat(fmtMoney(r.sold.revenue), 'продано на сумму'),
+        stat(fmtMoney(r.received.total), 'получено в кассу'), stat(fmtMoney(r.debt_total), 'общий долг клиентов')),
+      h('div', { class: 'card' }, h('h2', {}, 'Касса по способам оплаты'), hbars(Object.entries(METHODS).map(([k, v]) => ({ name: v, amount: Number(r.received.by_method[k]) })), 'amount')),
       h('div', { class: 'grid two' },
         h('div', { class: 'card' }, h('h2', {}, 'По услугам'), hbars(r.by_service, 'visits')),
         h('div', { class: 'card' }, h('h2', {}, 'По специалистам'), hbars(r.by_specialist, 'visits')),

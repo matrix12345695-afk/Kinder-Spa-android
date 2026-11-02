@@ -255,6 +255,10 @@ def staff_summary(x, day, title='Сегодня'):
         WHERE (created_at AT TIME ZONE 'Asia/Tashkent')::date = %s""", (day,))
     lines = [f'📊 <b>{e(title)}, {d(day)}</b>', f'Посещений: <b>{total}</b>']
     lines += [f'• {e(r["name"])}: {r["n"]}' for r in by_service]
+    cash = x.all('''SELECT method, sum(amount) AS v FROM payments WHERE voided_at IS NULL
+        AND (paid_at AT TIME ZONE 'Asia/Tashkent')::date = %s GROUP BY method ORDER BY 2 DESC''', (day,))
+    lines += [f'Касса: <b>{A.fmt_sum(sum(r["v"] for r in cash))}</b>' +
+              (' (' + ', '.join(f'{A.PAYMENT_METHODS[r["method"]]} {A.fmt_sum(r["v"])}' for r in cash) + ')' if cash else '')]
     lines += [f'Продано абонементов: {sold["n"]} на {int(sold["sum"]):,} сум'.replace(',', ' '),
               f'Заканчиваются за 7 дней: {ending}', f'Заморожено: {frozen}']
     return '\n'.join(lines)
@@ -446,8 +450,9 @@ def _client_action(c, tg, chat_id, user, text, command, public_url):
         for s in subs:
             who = f" ({e(s['child_name'])})" if s['child_name'] else ''
             extra = f"\nЗаморожен с {d(s['frozen_since'])}" if s['frozen_since'] else ''
+            debt = f"\n💳 К оплате: {A.fmt_sum(s['debt'])}" if s.get('debt') else ''
             blocks.append(f"🎫 <b>{e(s['name'])}</b>{who}\n{items_text(s['items'])}\n"
-                          f"Действует до {d(s['ends_on'])} · {STATE_NAMES.get(s['state'], s['state'])}{extra}")
+                          f"Действует до {d(s['ends_on'])} · {STATE_NAMES.get(s['state'], s['state'])}{extra}{debt}")
         tg.send(chat_id, '\n\n'.join(blocks), CLIENT_MENU)
         return
     if command == '/visits' or text == BTN_VISITS:

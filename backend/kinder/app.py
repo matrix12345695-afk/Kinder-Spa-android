@@ -734,7 +734,8 @@ def plan_update(x):
 
 def subscriptions_for(x, where, args, limit=500):
     rows = x.all(f'''SELECT s.id, s.client_id, c.full_name AS client_name, s.child_id, ch.full_name AS child_name,
-            s.plan_id, s.name, s.price, s.status, s.starts_on, s.ends_on, s.frozen_since, s.created_at
+            s.plan_id, s.name, s.price, s.status, s.starts_on, s.ends_on, s.frozen_since, s.created_at,
+            coalesce((SELECT sum(p.amount) FROM payments p WHERE p.subscription_id=s.id AND p.voided_at IS NULL), 0) AS paid
         FROM subscriptions s JOIN clients c ON c.id=s.client_id LEFT JOIN children ch ON ch.id=s.child_id
         WHERE {where} ORDER BY (s.status='closed'), s.ends_on DESC, s.id DESC LIMIT {int(limit)}''', args)
     if rows:
@@ -746,6 +747,7 @@ def subscriptions_for(x, where, args, limit=500):
             r['items'] = [{k: i[k] for k in ('service_id', 'quota', 'remaining', 'name_ru', 'code')}
                           for i in items if i['subscription_id'] == r['id']]
             r['state'] = subscription_state(r, t)
+            r['debt'] = max(Decimal('0.00'), r['price'] - r['paid']) if r['status'] != 'closed' else Decimal('0.00')
     return rows
 
 
@@ -771,6 +773,9 @@ def subscriptions_list(x):
                                  (t, t + timedelta(days=7), t))
     if state == 'frozen':
         return subscriptions_for(x, "s.status='frozen'", ())
+    if state == 'debt':
+        return subscriptions_for(x, '''s.status <> 'closed' AND s.price >
+            coalesce((SELECT sum(p.amount) FROM payments p WHERE p.subscription_id=s.id AND p.voided_at IS NULL), 0)''', ())
     return subscriptions_for(x, "s.status <> 'closed' AND s.ends_on >= %s", (today(),))
 
 
@@ -806,8 +811,13 @@ def subscription_create(x):
             x.c.execute('INSERT INTO subscription_items VALUES (%s,%s,%s,%s)', (row['id'], sid, visits, visits))
         x.audit('create_subscription', 'subscription', row['id'], client_id=cid, child_id=child_id,
                 plan_id=plan_id, name=name, price=price, starts_on=starts, ends_on=ends, items=items)
+        paid_now = money(x.body.get('paid_amount'), 'paid_amount')
+        if paid_now:
+            record_payment(x, row['id'], price, Decimal('0'), paid_now, x.body.get('paid_method') or 'cash', '')
+        debt = max(Decimal('0'), price - (paid_now or Decimal('0')))
         x.notify_client(cid, f"🎉 Оформлен абонемент <b>{tgbot.e(name)}</b>\n"
-                        f"Действует с {starts.strftime('%d.%m.%Y')} по {ends.strftime('%d.%m.%Y')}.")
+                        f"Действует с {starts.strftime('%d.%m.%Y')} по {ends.strftime('%d.%m.%Y')}."
+                        + (f"\nК оплате: {fmt_sum(debt)}" if debt else ''))
     return {'id': row['id']}
 
 
@@ -820,6 +830,7 @@ def subscription_get(x):
     rows = subscriptions_for(x, 's.id=%s', (ident(x.params['id']),))
     sub = found(rows[0] if rows else None)
     sub['visits'] = visits_query(x, 'v.subscription_id=%s', (sub['id'],), limit=500, include_cancelled=True)
+    sub['payments'] = payments_query(x, 'p.subscription_id=%s', (sub['id'],))
     sub['history'] = x.all("SELECT a.at, a.action, a.details, u.full_name AS actor FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id WHERE a.entity='subscription' AND a.entity_id=%s ORDER BY a.id", (sub['id'],))
     return sub
 
@@ -902,6 +913,86 @@ def subscription_close(x):
         x.c.execute("UPDATE subscriptions SET status='closed', frozen_since=NULL WHERE id=%s", (s['id'],))
         x.audit('close', 'subscription', s['id'], reason=why)
     return {'ok': True}
+
+
+# ---------------------------------------------------------------- payments
+
+PAYMENT_METHODS = {'cash': 'наличные', 'card': 'карта', 'click': 'Click', 'payme': 'Payme', 'transfer': 'перевод'}
+
+
+def fmt_sum(amount):
+    return f"{int(amount):,}".replace(',', ' ') + ' сум'
+
+
+def record_payment(x, sid, price, paid_before, amount, method, note):
+    if method not in PAYMENT_METHODS:
+        raise ApiError(400, 'invalid_field', 'method')
+    if amount is None or amount <= 0:
+        raise ApiError(400, 'invalid_field', 'amount')
+    if paid_before + amount > price:
+        raise ApiError(409, 'overpayment', {'debt': max(Decimal('0'), price - paid_before)})
+    row = x.one('''INSERT INTO payments(subscription_id, amount, method, paid_at, staff_id, note)
+        VALUES (%s,%s,%s,%s,%s,%s) RETURNING id''', (sid, amount, method, now(), x.user['id'], note))
+    x.audit('payment', 'subscription', sid, payment_id=row['id'], amount=amount, method=method, note=note)
+    return row['id']
+
+
+@api('/subscriptions/{id}/payments', ('POST',))
+def payment_create(x):
+    amount = money(x.body.get('amount'), 'amount')
+    method = x.body.get('method') or 'cash'
+    note = text(x.body, 'note', max_len=300)
+    with x.c.transaction():
+        s = lock_subscription(x, x.params['id'])
+        if s['status'] == 'closed':
+            raise ApiError(409, 'closed')
+        paid = x.one('SELECT coalesce(sum(amount),0) AS v FROM payments WHERE subscription_id=%s AND voided_at IS NULL', (s['id'],))['v']
+        pid = record_payment(x, s['id'], s['price'], paid, amount, method, note)
+        debt = s['price'] - paid - amount
+        x.notify_client(s['client_id'], f"💳 Оплата получена: <b>{fmt_sum(amount)}</b> ({PAYMENT_METHODS[method]}) — {tgbot.e(s['name'])}\n"
+                        + (f"Остаток к оплате: {fmt_sum(debt)}" if debt > 0 else 'Абонемент оплачен полностью. Спасибо!'))
+    return {'id': pid, 'debt': debt}
+
+
+@api('/payments/{id}/void', ('POST',))
+def payment_void(x):
+    why = reason(x.body)
+    pid = ident(x.params['id'])
+    with x.c.transaction():
+        pointer = found(x.one('SELECT subscription_id FROM payments WHERE id=%s', (pid,)))
+        s = lock_subscription(x, pointer['subscription_id'])
+        p = x.one('SELECT * FROM payments WHERE id=%s FOR UPDATE', (pid,))
+        if p['voided_at']:
+            raise ApiError(409, 'already_voided')
+        same_day = p['paid_at'].astimezone(ZONE).date() == today()
+        if x.user['role'] != 'superadmin' and not (same_day and p['staff_id'] == x.user['id']):
+            raise ApiError(403, 'void_needs_superadmin')
+        x.c.execute('UPDATE payments SET voided_at=%s, voided_by=%s, void_reason=%s WHERE id=%s', (now(), x.user['id'], why, pid))
+        x.audit('void_payment', 'subscription', s['id'], payment_id=pid, amount=p['amount'], method=p['method'], reason=why)
+    return {'ok': True}
+
+
+def payments_query(x, where, args, limit=2000):
+    return x.all(f'''SELECT p.id, p.subscription_id, s.name AS subscription_name, s.client_id, c.full_name AS client_name,
+            p.amount, p.method, p.paid_at, p.note, st.full_name AS staff_name, p.staff_id,
+            p.voided_at, p.void_reason, vb.full_name AS voided_by_name
+        FROM payments p JOIN subscriptions s ON s.id=p.subscription_id JOIN clients c ON c.id=s.client_id
+        JOIN users st ON st.id=p.staff_id LEFT JOIN users vb ON vb.id=p.voided_by
+        WHERE {where} ORDER BY p.paid_at DESC, p.id DESC LIMIT {int(limit)}''', args)
+
+
+@api('/payments')
+def payments_list(x):
+    start = day(x.query.get('from'), 'from') or today()
+    end = day(x.query.get('to'), 'to') or start
+    if end < start or (end - start).days > 366:
+        raise ApiError(400, 'invalid_period')
+    rows = payments_query(x, "(p.paid_at AT TIME ZONE 'Asia/Tashkent')::date BETWEEN %s AND %s", (start, end))
+    totals = {m: Decimal('0') for m in PAYMENT_METHODS}
+    for r in rows:
+        if not r['voided_at']:
+            totals[r['method']] += r['amount']
+    return {'from': start, 'to': end, 'payments': rows, 'by_method': totals, 'total': sum(totals.values())}
 
 
 # ---------------------------------------------------------------- visits
@@ -1079,6 +1170,7 @@ def my_subscriptions(x):
     rows = subscriptions_for(x, 's.client_id=%s', (my_client(x)['id'],), limit=100)
     for r in rows:
         r.pop('price', None)
+        r.pop('paid', None)
     return rows
 
 
@@ -1135,8 +1227,16 @@ def reports(x):
         (SELECT count(*) FROM subscriptions WHERE status='frozen') AS frozen_subscriptions,
         (SELECT count(*) FROM visits v WHERE v.cancelled_at IS NULL AND (v.visited_at AT TIME ZONE 'Asia/Tashkent')::date = %s) AS visits_today''',
                    (t, t))
+    pay = x.all('''SELECT method, coalesce(sum(amount),0) AS amount FROM payments
+        WHERE voided_at IS NULL AND (paid_at AT TIME ZONE 'Asia/Tashkent')::date BETWEEN %s AND %s GROUP BY method''', rng)
+    by_method = {m: Decimal('0') for m in PAYMENT_METHODS}
+    for r in pay:
+        by_method[r['method']] = r['amount']
+    debt = x.one('''SELECT coalesce(sum(greatest(s.price - coalesce((SELECT sum(p.amount) FROM payments p
+        WHERE p.subscription_id=s.id AND p.voided_at IS NULL), 0), 0)), 0) AS v FROM subscriptions s WHERE s.status <> 'closed' ''')['v']
     return {'from': start, 'to': end, 'totals': counts, 'by_service': by_service, 'by_day': by_day,
-            'by_specialist': by_specialist, 'sold': sold, 'sold_by_plan': sold_by_plan}
+            'by_specialist': by_specialist, 'sold': sold, 'sold_by_plan': sold_by_plan,
+            'received': {'by_method': by_method, 'total': sum(by_method.values())}, 'debt_total': debt}
 
 
 @api('/audit')

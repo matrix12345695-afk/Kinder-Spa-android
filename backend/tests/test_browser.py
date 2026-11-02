@@ -163,3 +163,37 @@ def test_admin_rejects_parent_login(page, server, owner):
     page.fill('input[name=password]', cred['password'])
     page.click('button[type=submit]')
     page.wait_for_selector('text=Это вход для сотрудников')
+
+
+def test_payments_ui(page, server, owner):
+    _, r = owner.post('/api/clients', {'full_name': 'Касса Браузер', 'children': [{'full_name': 'Сара'}]}, expect=200)
+    pg = page
+    pg.goto(server + '/admin/')
+    pg.fill('input[name=login]', 'owner')
+    pg.fill('input[name=password]', 'owner-pass-123')
+    pg.click('button[type=submit]')
+    pg.wait_for_selector('h1:has-text("Сегодня")')
+    pg.goto(server + f"/admin/#client/{r['id']}")
+    pg.wait_for_selector('h1:has-text("Касса Браузер")')
+    pg.click('text=+ Абонемент')
+    pg.fill('.modal input[name=price]', '300000')
+    pg.fill('.modal input[name=paid_amount]', '100000')
+    pg.select_option('.modal select[name=paid_method]', 'card')
+    pg.click('.modal button[type=submit]')
+    pg.wait_for_selector('.sub .badge.bad:has-text("долг")')
+    pg.click('.sub button:has-text("Принять оплату")')
+    assert pg.input_value('.modal input[name=amount]') == '200000.00'
+    pg.select_option('.modal select[name=method]', 'payme')
+    pg.click('.modal button[type=submit]')
+    pg.wait_for_selector('.sub .badge.active:has-text("оплачен")')
+    pg.click('nav >> text=Касса')
+    pg.wait_for_selector('td:has-text("Касса Браузер")')
+    shot(pg, '10-cash')
+    pg.locator('button:has-text("Отменить")').first.click()
+    pg.fill('.modal textarea[name=reason]', 'неверный способ')
+    pg.click('.modal button[type=submit]')
+    pg.wait_for_selector('tr.cancelled')
+    pg.click('nav >> text=Абонементы')
+    pg.click('button:has-text("С долгом")')
+    pg.wait_for_selector('td:has-text("Касса Браузер")')
+    assert not pg.errors, pg.errors
