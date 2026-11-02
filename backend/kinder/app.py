@@ -108,10 +108,14 @@ def api(path, methods=('GET',), roles=STAFF):
                         return json_response({'error': 'invalid_json'}, 400)
             token = request.headers.get('authorization', '')
             token = token[7:].strip() if token.lower().startswith('bearer ') else ''
+            init_data = request.headers.get('x-telegram-init-data', '')
 
             def run():
                 with request.app.state.db.conn() as c:
                     user = authenticate(c, token) if token else None
+                    if not user and init_data and request.app.state.tg:
+                        tg_user = tgbot.validate_init_data(init_data, request.app.state.tg.token)
+                        user = tgbot.user_for_tg_id(c, tg_user['id']) if tg_user else None
                     if roles is not None:
                         if not user:
                             raise ApiError(401, 'unauthorized')
@@ -1188,6 +1192,14 @@ async def cron_daily(request):
     return json_response(result)
 
 
+TG_CSP = ("default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' data:; "
+          "connect-src 'self'; frame-ancestors https://web.telegram.org https://*.telegram.org; base-uri 'none'")
+
+
+async def tg_scan_page(request):
+    return FileResponse(STATIC / 'tg' / 'scan.html', headers={'Cache-Control': 'no-cache', 'Content-Security-Policy': TG_CSP})
+
+
 async def admin_index(request):
     return FileResponse(STATIC / 'index.html', headers={'Cache-Control': 'no-cache'})
 
@@ -1215,7 +1227,8 @@ class SecurityHeaders:
             if message['type'] == 'http.response.start':
                 headers = list(message.get('headers', []))
                 names = {k.lower() for k, _ in headers}
-                headers += [h for h in SECURITY_HEADERS if h[0] not in names]
+                skip = {b'x-frame-options'} if scope['path'].startswith('/tg/') else set()
+                headers += [h for h in SECURITY_HEADERS if h[0] not in names and h[0] not in skip]
                 if scope.get('scheme') == 'https' or os.environ.get('RENDER'):
                     headers.append((b'strict-transport-security', b'max-age=31536000'))
                 if api_path and b'cache-control' not in names:
@@ -1248,6 +1261,7 @@ def create_app(database_url=None, connect=None, migrate=True, telegram_api=None)
     token = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
     tg = telegram_api or (tgbot.TelegramAPI(token) if token else None)
     public_url = (os.environ.get('PUBLIC_URL') or os.environ.get('RENDER_EXTERNAL_URL') or '').rstrip('/')
+    tgbot.PUBLIC_URL = public_url
 
     @asynccontextmanager
     async def lifespan(app):
@@ -1272,6 +1286,8 @@ def create_app(database_url=None, connect=None, migrate=True, telegram_api=None)
               Route('/admin', lambda r: RedirectResponse('/admin/')), Route('/admin/', admin_index),
               Mount('/admin/static', StaticFiles(directory=STATIC), name='static'),
               Route('/telegram/webhook', telegram_webhook, methods=['POST']),
+              Route('/tg/scan', tg_scan_page),
+              Mount('/tg/static', StaticFiles(directory=STATIC / 'tg'), name='tgstatic'),
               Route('/api/cron/daily', cron_daily, methods=['POST'])] + ROUTES
     app = Starlette(routes=routes, lifespan=lifespan)
     app.state.db = db

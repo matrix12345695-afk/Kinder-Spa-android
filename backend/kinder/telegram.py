@@ -41,6 +41,38 @@ class TelegramError(Exception):
         self.code, self.description = code, description
 
 
+def validate_init_data(init_data, token, max_age=86400, now_ts=None):
+    """Validate Telegram Mini App initData; returns the Telegram user dict or None."""
+    import time
+    from urllib.parse import parse_qsl
+    if not init_data or not token or len(init_data) > 4096:
+        return None
+    try:
+        pairs = dict(parse_qsl(init_data, keep_blank_values=True, strict_parsing=True))
+    except ValueError:
+        return None
+    received = pairs.pop('hash', '')
+    check = '\n'.join(f'{k}={v}' for k, v in sorted(pairs.items()))
+    secret = hmac.new(b'WebAppData', token.encode(), hashlib.sha256).digest()
+    expected = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, received):
+        return None
+    try:
+        auth_date = int(pairs.get('auth_date', '0'))
+        user = json.loads(pairs.get('user', '{}'))
+    except ValueError:
+        return None
+    if abs((now_ts or time.time()) - auth_date) > max_age or not isinstance(user.get('id'), int):
+        return None
+    return user
+
+
+def user_for_tg_id(c, tg_user_id):
+    """Kinder user linked to this Telegram account (private chat id == user id)."""
+    return c.execute('''SELECT u.id, u.role, u.login, u.full_name FROM telegram_chats tc JOIN users u ON u.id = tc.user_id
+        WHERE tc.chat_id = %s AND u.enabled AND tc.cred_version = u.cred_version''', (tg_user_id,)).fetchone()
+
+
 def webhook_secret(token):
     return hmac.new(token.encode(), b'kinder-spa-webhook', hashlib.sha256).hexdigest()[:48]
 
@@ -242,8 +274,19 @@ def set_state(c, chat_id, state, data=None):
               (state, json.dumps(data or {}), chat_id))
 
 
+BTN_SCAN = '📷 Сканировать QR'
+PUBLIC_URL = ''  # set by the app at startup
+
+
+def staff_menu():
+    rows = [[{'text': BTN_TODAY}, {'text': BTN_ENDING}], [{'text': BTN_HELP}, {'text': BTN_LOGOUT}]]
+    if PUBLIC_URL.startswith('https://'):
+        rows.insert(0, [{'text': BTN_SCAN, 'web_app': {'url': PUBLIC_URL + '/tg/scan'}}])
+    return {'keyboard': rows, 'resize_keyboard': True, 'is_persistent': True}
+
+
 def menu_for(user):
-    return STAFF_MENU if user['role'] in ('admin', 'superadmin') else CLIENT_MENU
+    return staff_menu() if user['role'] in ('admin', 'superadmin') else CLIENT_MENU
 
 
 HELP_CLIENT = ('Это бот детского центра <b>Kinder Spa</b>.\n\n'
@@ -253,6 +296,7 @@ HELP_CLIENT = ('Это бот детского центра <b>Kinder Spa</b>.\n
                f'{BTN_SERVICES} — массаж, гидромассаж, бассейн.\n\n'
                'После каждого посещения сюда придёт уведомление, а за 3 дня до окончания абонемента — напоминание.')
 HELP_STAFF = ('Вы вошли как сотрудник Kinder Spa.\n\n'
+              f'{BTN_SCAN} — наведите камеру на QR-код клиента и спишите посещение.\n'
               f'{BTN_TODAY} — посещения и продажи за сегодня.\n'
               f'{BTN_ENDING} — абонементы, которые скоро закончатся.\n'
               'Каждое утро сюда приходит сводка за вчерашний день.')
@@ -371,7 +415,7 @@ def _login_flow(c, tg, chat, text, command, message_id):
         DbCtx(c, {'id': user['id']}).audit('telegram_link', 'user', user['id'], chat_id=chat_id)
     staff = user['role'] != 'client'
     tg.send(chat_id, f"Готово, {e(user['full_name'] or '')}! ✅\n\n" + (HELP_STAFF if staff else HELP_CLIENT),
-            STAFF_MENU if staff else CLIENT_MENU)
+            staff_menu() if staff else CLIENT_MENU)
 
 
 def _client_action(c, tg, chat_id, user, text, command, public_url):
@@ -442,19 +486,19 @@ def _staff_action(c, tg, chat_id, user, text, command):
     from . import app as A
     x = DbCtx(c, user)
     if command == '/today' or text == BTN_TODAY:
-        tg.send(chat_id, staff_summary(x, A.today()), STAFF_MENU)
+        tg.send(chat_id, staff_summary(x, A.today()), staff_menu())
         return
     if command == '/ending' or text == BTN_ENDING:
         t = A.today()
         subs = A.subscriptions_for(x, "s.status='active' AND s.ends_on BETWEEN %s AND %s", (t, t + timedelta(days=7)), limit=30)
         if not subs:
-            tg.send(chat_id, 'В ближайшие 7 дней абонементы не заканчиваются.', STAFF_MENU)
+            tg.send(chat_id, 'В ближайшие 7 дней абонементы не заканчиваются.', staff_menu())
             return
         lines = ['⏳ <b>Заканчиваются за 7 дней</b>']
         lines += [f"{d(s['ends_on'])} — {e(s['client_name'])}: {e(s['name'])} ({items_text(s['items'])})" for s in subs]
-        tg.send(chat_id, '\n'.join(lines), STAFF_MENU)
+        tg.send(chat_id, '\n'.join(lines), staff_menu())
         return
-    tg.send(chat_id, 'Выберите действие в меню ниже 👇', STAFF_MENU)
+    tg.send(chat_id, 'Выберите действие в меню ниже 👇', staff_menu())
 
 
 COMMANDS = [{'command': 'start', 'description': 'Начать / меню'}, {'command': 'qr', 'description': 'QR-код для ресепшена'},

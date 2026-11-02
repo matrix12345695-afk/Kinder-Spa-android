@@ -178,7 +178,9 @@ def test_logout(owner, chat):
 def test_staff_bot(owner, chat, server):
     _, staff = owner.post('/api/staff', {'login': 'tgstaff', 'full_name': 'Ресепшен Бот'}, expect=200)
     msg = chat.login('tgstaff', staff['password'])
-    assert msg['reply_markup']['keyboard'][0][0]['text'] == BTN_TODAY
+    first = msg['reply_markup']['keyboard'][0][0]
+    assert first['text'] == '📷 Сканировать QR' and first['web_app']['url'] == 'https://kinder.test/tg/scan'
+    assert msg['reply_markup']['keyboard'][1][0]['text'] == BTN_TODAY
     chat.send(BTN_TODAY)
     assert 'Посещений:' in chat.last()['text']
 
