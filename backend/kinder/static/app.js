@@ -39,7 +39,7 @@ const ACTIONS = {
   adjust: 'Корректировка', close: 'Закрытие', create_staff: 'Новый сотрудник', update_staff: 'Изменение сотрудника',
   reset_password: 'Сброс пароля', change_password: 'Смена пароля', create_service: 'Новая услуга', update_service: 'Изменение услуги',
   add_photo: 'Добавлено фото', delete_photo: 'Удалено фото', create_specialist: 'Новый специалист', update_specialist: 'Изменение специалиста',
-  payment: 'Оплата', void_payment: 'Отмена оплаты', telegram_link: 'Вход в Telegram-бот',
+  export: 'Выгрузка отчёта', export_backup: 'Резервная копия', payment: 'Оплата', void_payment: 'Отмена оплаты', telegram_link: 'Вход в Telegram-бот',
   create_slot: 'Новое занятие', generate_slots: 'Создано расписание', update_slot: 'Изменение занятия', cancel_slot: 'Отмена занятия',
   book: 'Запись', cancel_booking: 'Отмена записи', no_show: 'Неявка',
   create_plan: 'Новый тариф', update_plan: 'Изменение тарифа', bootstrap_superadmin: 'Создан главный администратор',
@@ -94,6 +94,15 @@ async function api(method, path, body) {
   if (res.status === 401 && path !== '/login') { logout(true); throw { code: 'unauthorized' }; }
   if (!res.ok) throw { code: (data && data.error) || 'internal_error', detail: data && data.detail, status: res.status };
   return data;
+}
+async function download(path) {
+  let res;
+  try { res = await fetch('/api' + path, { headers: { Authorization: 'Bearer ' + state.token } }); } catch (_) { throw { code: 'network' }; }
+  if (!res.ok) { let d = null; try { d = await res.json(); } catch (_) { /* empty */ } throw { code: (d && d.error) || 'internal_error' }; }
+  const name = (/filename="([^"]+)"/.exec(res.headers.get('content-disposition') || '') || [])[1] || 'kinder.csv';
+  const url = URL.createObjectURL(await res.blob());
+  const a = h('a', { href: url, download: name }); document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 async function guard(fn, okMsg) {
   try { const r = await fn(); if (okMsg) toast(okMsg); return r; } catch (e) { toast(errText(e), true); throw e; }
@@ -415,7 +424,9 @@ async function pageCash(main) {
     h('div', { class: 'card' }, paymentsTable(r.payments, { onChange: load })));
   };
   [from, to].forEach((el) => el.addEventListener('change', () => guard(load)));
-  main.replaceChildren(h('h1', {}, 'Касса'), h('div', { class: 'card row' }, field('С', from), field('По', to)), box);
+  main.replaceChildren(h('div', { class: 'row between' }, h('h1', {}, 'Касса'),
+    h('button', { class: 'btn', onclick: () => guard(() => download(`/export/payments.csv?from=${from.value}&to=${to.value}`), 'Файл скачан') }, 'Скачать в Excel')),
+  h('div', { class: 'card row' }, field('С', from), field('По', to)), box);
   await load();
 }
 async function subHistory(id) {
@@ -846,7 +857,13 @@ async function pageReports(main) {
         h('div', { class: 'card' }, h('h2', {}, 'Продажи по тарифам'), r.sold_by_plan.length ? h('table', {}, h('tbody', {}, r.sold_by_plan.map((p) => h('tr', {}, h('td', {}, p.name), h('td', { class: 'num' }, p.count, ' шт.'), h('td', { class: 'num' }, fmtMoney(p.revenue)))))) : h('div', { class: 'empty' }, 'Нет продаж'))));
   };
   [from, to].forEach((el) => el.addEventListener('change', () => guard(load)));
-  main.replaceChildren(h('h1', {}, 'Отчёты'), h('div', { class: 'card row' }, field('С', from), field('По', to)), box);
+  const exp = (name) => () => guard(() => download(`/export/${name}.csv?from=${from.value}&to=${to.value}`), 'Файл скачан');
+  const exports = h('div', { class: 'card stack' }, h('h2', {}, 'Выгрузки в Excel'),
+    h('p', { class: 'small muted' }, 'CSV-файлы открываются в Excel. Оплаты и посещения — за выбранный период, долги и клиенты — на сегодня.'),
+    h('div', { class: 'row' }, h('button', { class: 'btn', onclick: exp('payments') }, 'Оплаты'), h('button', { class: 'btn', onclick: exp('visits') }, 'Посещения'),
+      h('button', { class: 'btn', onclick: exp('debts') }, 'Долги'), h('button', { class: 'btn', onclick: exp('clients') }, 'Клиенты'),
+      state.me.role === 'superadmin' ? h('button', { class: 'btn right', onclick: () => guard(() => download('/export/backup.json'), 'Резервная копия скачана') }, 'Резервная копия (все данные)') : null));
+  main.replaceChildren(h('h1', {}, 'Отчёты'), h('div', { class: 'card row' }, field('С', from), field('По', to)), exports, box);
   await load();
 }
 async function pageStaff(main) {
