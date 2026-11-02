@@ -75,6 +75,29 @@ TELEGRAM_REQUIRED_INDEXES = {
     'telegram_ready': ('telegram_jobs', False),
 }
 
+# Schema integrity gates for the accounting and authentication relationships.
+# Each tuple is (table, constraint, kind, columns, referenced_table,
+#                referenced_columns). 'p'=PK, 'u'=UNIQUE, 'f'=FOREIGN KEY.
+# Names and columns are from the reviewed first-install migrations.
+SAFETY_CONSTRAINTS = (
+    ('allowances', 'allowances_pkey', 'p',
+     ('subscription_id', 'category'), None, ()),
+    ('bookings', 'bookings_subscription_id_category_fkey', 'f',
+     ('subscription_id', 'category'), 'allowances', ('subscription_id', 'category')),
+    ('bookings', 'bookings_subscription_id_starts_at_key', 'u',
+     ('subscription_id', 'starts_at'), None, ()),
+    ('qr_tokens', 'qr_tokens_booking_id_fkey', 'f',
+     ('booking_id',), 'bookings', ('id',)),
+    ('audit_events', 'audit_events_actor_id_fkey', 'f',
+     ('actor_id',), 'accounts', ('id',)),
+    ('notification_outbox', 'notification_outbox_event_id_fkey', 'f',
+     ('event_id',), 'audit_events', ('id',)),
+    ('credentials', 'credentials_account_id_fkey', 'f',
+     ('account_id',), 'accounts', ('id',)),
+    ('auth_sessions', 'auth_sessions_account_id_fkey', 'f',
+     ('account_id',), 'credentials', ('account_id',)),
+)
+
 
 @dataclass(frozen=True)
 class Configuration:
@@ -219,6 +242,30 @@ def inspect_database(factory, schema, *, telegram_links=False):
                         or row[6] != 'plpgsql' or row[7] or row[8] != 'f'
                         or row[9] != 0 or not row[10]):
                     missing_safety.append(table + ':' + trigger)
+            for table, name, kind, columns, target_table, target_columns in SAFETY_CONSTRAINTS:
+                info = conn.execute("""SELECT co.contype,co.convalidated,co.condeferrable,
+                        co.condeferred,co.confupdtype,co.confdeltype,
+                        (SELECT array_agg(a.attname ORDER BY k.ordinality)
+                         FROM unnest(co.conkey) WITH ORDINALITY AS k(num,ordinality)
+                         JOIN pg_attribute a ON a.attrelid=co.conrelid AND a.attnum=k.num),
+                        rn.nspname, rt.relname,
+                        (SELECT array_agg(a.attname ORDER BY k.ordinality)
+                         FROM unnest(co.confkey) WITH ORDINALITY AS k(num,ordinality)
+                         JOIN pg_attribute a ON a.attrelid=co.confrelid AND a.attnum=k.num)
+                    FROM pg_constraint co
+                    JOIN pg_class t ON t.oid=co.conrelid
+                    JOIN pg_namespace n ON n.oid=t.relnamespace
+                    LEFT JOIN pg_class rt ON rt.oid=co.confrelid
+                    LEFT JOIN pg_namespace rn ON rn.oid=rt.relnamespace
+                    WHERE n.nspname=%s AND t.relname=%s AND co.conname=%s""",
+                    (schema, table, name)).fetchone()
+                if (not info or info[0] != kind or not info[1] or info[2] or info[3]
+                        or tuple(info[6] or ()) != columns
+                        or (kind == 'f' and (
+                            info[4:6] != ('a', 'a') or
+                            info[7:9] != (schema, target_table) or
+                            tuple(info[9] or ()) != target_columns))):
+                    missing_safety.append(table + ':' + name)
             indexes = REQUIRED_INDEXES | (TELEGRAM_REQUIRED_INDEXES if telegram_links else {})
             for index, (table, unique) in indexes.items():
                 row = conn.execute("""SELECT i.indisvalid,i.indisready,i.indisunique
