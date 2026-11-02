@@ -22,7 +22,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from auth_fixtures import Fixture, PASSWORD
 from kinder.gateway import Server, SafeLogger
-from kinder.render_api import Configuration, RenderApp, configuration, inspect_database, main, TABLES
+from kinder.render_api import Configuration, RenderApp, configuration, inspect_database, main, TABLES, UPDATE_COLUMNS
 
 
 ORIGIN = 'https://kinder-fixture.onrender.com'
@@ -138,6 +138,9 @@ class DatabaseGatewayTests(Fixture):
         self.conn.execute(sql.SQL('GRANT USAGE ON SCHEMA {} TO {}').format(sql.Identifier(self.schema),sql.Identifier(self.runtime_role)))
         for name,privileges in TABLES.items():
             self.conn.execute(sql.SQL('GRANT '+privileges+' ON {}.{} TO {}').format(sql.Identifier(self.schema),sql.Identifier(name),sql.Identifier(self.runtime_role)))
+        for name,columns in UPDATE_COLUMNS.items():
+            self.conn.execute(sql.SQL('GRANT UPDATE (' + ','.join(columns) + ') ON {}.{} TO {}').format(
+                sql.Identifier(self.schema), sql.Identifier(name), sql.Identifier(self.runtime_role)))
         self.conn.execute(sql.SQL('GRANT USAGE ON ALL SEQUENCES IN SCHEMA {} TO {}').format(sql.Identifier(self.schema),sql.Identifier(self.runtime_role)))
         parsed=conninfo_to_dict(self.url);parsed.update(user=self.runtime_role,password='fixture-only')
         self.runtime_url=make_conninfo(**parsed)
@@ -167,6 +170,22 @@ class DatabaseGatewayTests(Fixture):
         report=self.probe();self.assertTrue(report['ready']);self.assertTrue(report['read_only'])
         self.assertEqual(before,[self.count(t) for t in ('accounts','auth_sessions','audit_events')])
 
+    def test_ready_runtime_can_take_subscription_row_lock(self):
+        # Store._subscription uses SELECT ... FOR UPDATE even though subscription
+        # values themselves are never updated. PostgreSQL requires UPDATE grant.
+        self.assertTrue(self.probe()['ready'])
+        with self.runtime_factory() as conn, conn.transaction():
+            conn.execute("SELECT client_id FROM subscriptions LIMIT 1 FOR UPDATE")
+
+    def test_subscription_lock_privilege_is_required_by_preflight(self):
+        self.conn.execute(sql.SQL('REVOKE UPDATE(id) ON subscriptions FROM {}').format(sql.Identifier(self.runtime_role)))
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('subscriptions:UPDATE(id)', report['insufficient_privileges'])
+        with self.runtime_factory() as conn, conn.transaction():
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                conn.execute("SELECT client_id FROM subscriptions LIMIT 1 FOR UPDATE")
+
     def test_absent_table_is_not_ready(self):
         self.conn.execute('ALTER TABLE auth_sessions RENAME TO old_sessions')
         self.assertIn('auth_sessions',self.probe()['missing_tables']);self.assertFalse(self.probe()['ready'])
@@ -175,6 +194,119 @@ class DatabaseGatewayTests(Fixture):
         self.conn.execute('ALTER TABLE auth_sessions RENAME TO old_sessions')
         self.conn.execute('CREATE VIEW auth_sessions AS SELECT * FROM old_sessions')
         self.assertIn('auth_sessions',self.probe()['missing_tables'])
+
+    def test_audit_trigger_removed_cannot_pass_api_readiness(self):
+        self.conn.execute('DROP TRIGGER audit_no_update ON audit_events')
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('audit_events:audit_no_update', report['missing_safety_objects'])
+        self.assertEqual(self.request('GET', '/health')[:2], (503, {'error':'not_ready'}))
+
+    def test_replaced_audit_function_refuses_api_even_if_trigger_exists(self):
+        # A matching trigger name alone does not prove an immutable audit log.
+        self.conn.execute("""CREATE OR REPLACE FUNCTION immutable_audit()
+            RETURNS trigger LANGUAGE plpgsql AS $body$
+            BEGIN RETURN OLD; END;
+            $body$""")
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('audit_events:audit_no_update', report['missing_safety_objects'])
+        self.assertIn('notification_outbox:notification_outbox_no_update',
+                      report['missing_safety_objects'])
+
+    def test_replaced_identity_function_refuses_api_preflight(self):
+        self.conn.execute("""CREATE OR REPLACE FUNCTION immutable_identifier()
+            RETURNS trigger LANGUAGE plpgsql AS $body$
+            BEGIN RETURN NEW; END;
+            $body$""")
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('accounts:accounts_id_immutable', report['missing_safety_objects'])
+        self.assertIn('credentials:credentials_account_immutable',
+                      report['missing_safety_objects'])
+
+    def test_extra_update_column_on_bookings_refuses_startup(self):
+        self.conn.execute(sql.SQL('GRANT UPDATE(ends_at) ON bookings TO {}').format(
+            sql.Identifier(self.runtime_role)))
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('bookings:UPDATE(ends_at):excess', report['insufficient_privileges'])
+
+    def test_extra_delete_on_bookings_refuses_startup(self):
+        self.conn.execute(sql.SQL('GRANT DELETE ON bookings TO {}').format(
+            sql.Identifier(self.runtime_role)))
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('bookings:DELETE:excess', report['insufficient_privileges'])
+
+    def test_extra_trigger_privilege_on_accounts_refuses_startup(self):
+        self.conn.execute(sql.SQL('GRANT TRIGGER ON accounts TO {}').format(
+            sql.Identifier(self.runtime_role)))
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('accounts:TRIGGER:excess', report['insufficient_privileges'])
+
+    def test_missing_pool_booking_foreign_key_refuses_api_readiness(self):
+        self.conn.execute('ALTER TABLE bookings DROP CONSTRAINT bookings_subscription_id_category_fkey')
+        result = self.probe()
+        self.assertFalse(result['ready'])
+        self.assertIn('bookings:bookings_subscription_id_category_fkey',
+                      result['missing_safety_objects'])
+        self.assertEqual(self.request('GET', '/health')[:2], (503, {'error':'not_ready'}))
+
+    def test_missing_unique_booking_time_refuses_api_readiness(self):
+        self.conn.execute('ALTER TABLE bookings DROP CONSTRAINT bookings_subscription_id_starts_at_key')
+        result = self.probe()
+        self.assertFalse(result['ready'])
+        self.assertIn('bookings:bookings_subscription_id_starts_at_key',
+                      result['missing_safety_objects'])
+
+    def test_unvalidated_session_account_foreign_key_refuses_api_readiness(self):
+        self.conn.execute('ALTER TABLE auth_sessions DROP CONSTRAINT auth_sessions_account_id_fkey')
+        self.conn.execute('''ALTER TABLE auth_sessions
+            ADD CONSTRAINT auth_sessions_account_id_fkey
+            FOREIGN KEY (account_id) REFERENCES credentials(account_id) NOT VALID''')
+        result = self.probe()
+        self.assertFalse(result['ready'])
+        self.assertIn('auth_sessions:auth_sessions_account_id_fkey',
+                      result['missing_safety_objects'])
+
+    def test_qr_foreign_key_cannot_be_replaced_by_wrong_target(self):
+        self.conn.execute('ALTER TABLE qr_tokens DROP CONSTRAINT qr_tokens_booking_id_fkey')
+        self.conn.execute('''ALTER TABLE qr_tokens
+            ADD CONSTRAINT qr_tokens_booking_id_fkey
+            FOREIGN KEY (booking_id) REFERENCES accounts(id) NOT VALID''')
+        result = self.probe()
+        self.assertFalse(result['ready'])
+        self.assertIn('qr_tokens:qr_tokens_booking_id_fkey',
+                      result['missing_safety_objects'])
+
+    def test_disabled_outbox_trigger_cannot_pass_api_readiness(self):
+        self.conn.execute('ALTER TABLE notification_outbox DISABLE TRIGGER notification_outbox_no_update')
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('notification_outbox:notification_outbox_no_update',
+                      report['missing_safety_objects'])
+
+    def test_identity_guard_and_critical_index_are_required(self):
+        self.conn.execute('ALTER TABLE credentials DISABLE TRIGGER credentials_account_immutable')
+        self.conn.execute('DROP INDEX sessions_by_account')
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('credentials:credentials_account_immutable', report['missing_safety_objects'])
+        self.assertIn('auth_sessions:sessions_by_account', report['missing_safety_objects'])
+
+    def test_telegram_unique_binding_indexes_required_before_enabling_links(self):
+        self.conn.execute((Path(__file__).parents[1]/'telegram_schema.sql').read_text())
+        self.conn.execute(sql.SQL('GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}').format(
+            sql.Identifier(self.schema), sql.Identifier(self.runtime_role)))
+        self.conn.execute(sql.SQL('GRANT INSERT,UPDATE(revoked) ON telegram_link_codes TO {}').format(
+            sql.Identifier(self.runtime_role)))
+        self.assertTrue(self.probe(telegram_links=True)['ready'])
+        self.conn.execute('DROP INDEX telegram_one_peer')
+        report = self.probe(telegram_links=True)
+        self.assertFalse(report['ready'])
+        self.assertIn('telegram_bindings:telegram_one_peer', report['missing_safety_objects'])
 
     def test_database_superuser_cannot_be_a_runtime_role(self):
         self.assertFalse(inspect_database(self.factory,self.schema)['runtime_role_safe'])
@@ -194,8 +326,22 @@ class DatabaseGatewayTests(Fixture):
         self.assertFalse(self.probe()['runtime_role_safe'])
 
     def test_missing_mutation_permission_is_not_ready(self):
-        self.conn.execute(sql.SQL('REVOKE UPDATE ON allowances FROM {}').format(sql.Identifier(self.runtime_role)))
-        report=self.probe();self.assertFalse(report['ready']);self.assertIn('allowances:UPDATE',report['insufficient_privileges'])
+        self.conn.execute(sql.SQL('REVOKE UPDATE(remaining) ON allowances FROM {}').format(sql.Identifier(self.runtime_role)))
+        report=self.probe();self.assertFalse(report['ready']);self.assertIn('allowances:UPDATE(remaining)',report['insufficient_privileges'])
+
+    def test_full_table_update_permission_is_refused_by_api_preflight(self):
+        self.conn.execute(sql.SQL('GRANT UPDATE ON accounts TO {}').format(
+            sql.Identifier(self.runtime_role)))
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('accounts:UPDATE_ALL', report['insufficient_privileges'])
+
+    def test_outbox_column_update_is_refused_even_without_table_grant(self):
+        self.conn.execute(sql.SQL('GRANT UPDATE(kind) ON notification_outbox TO {}').format(
+            sql.Identifier(self.runtime_role)))
+        report = self.probe()
+        self.assertFalse(report['ready'])
+        self.assertIn('notification_outbox:column_mutable', report['insufficient_privileges'])
 
     def test_audit_mutation_privileges_are_refused(self):
         self.conn.execute(sql.SQL('GRANT DELETE ON audit_events TO {}').format(sql.Identifier(self.runtime_role)))
@@ -205,7 +351,7 @@ class DatabaseGatewayTests(Fixture):
         self.assertFalse(self.probe(telegram_links=True)['ready'])
         self.conn.execute((Path(__file__).parents[1]/'telegram_schema.sql').read_text())
         self.conn.execute(sql.SQL('GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}').format(sql.Identifier(self.schema),sql.Identifier(self.runtime_role)))
-        self.conn.execute(sql.SQL('GRANT INSERT,UPDATE ON telegram_link_codes TO {}').format(sql.Identifier(self.runtime_role)))
+        self.conn.execute(sql.SQL('GRANT INSERT,UPDATE(revoked) ON telegram_link_codes TO {}').format(sql.Identifier(self.runtime_role)))
         self.assertTrue(self.probe(telegram_links=True)['ready'])
 
     def test_every_metadata_select_runs_inside_read_only_transaction(self):

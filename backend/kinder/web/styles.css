@@ -2,3 +2,9 @@
 
 .header-actions{display:flex;align-items:center;gap:10px}.welcome h1,.hero h2{white-space:pre-line}.record .danger{color:#a34d39}.record .state{font-size:10px;font-weight:650;color:#267d9b}.record .queue{color:#8b6327}.record-list{min-height:70px}@media(max-width:650px){.header-actions{gap:4px}.header-actions .icon-button{font-size:20px;padding:0 6px}.topbar{padding:0 12px}.brand small{font-size:7px}}
 :root{--muted:#577288}.stats small{color:#577288}.nav-label{color:#60788c}.header-actions .icon-button{min-width:44px}.brand small{font-size:10px}@media(max-width:650px){.stats small{font-size:9px}.brand small{font-size:8px}}
+
+/* Explicit local-only camera preview for the staff QR dialog. */
+.qr-scan-controls{display:grid;gap:9px;margin-top:10px}
+.qr-scan-controls button{justify-self:start;font-size:12px}
+#qr-scan-video{width:100%;max-height:260px;object-fit:contain;background:#102c43;border-radius:12px}
+#qr-scan-status{margin:0;font-size:12px}

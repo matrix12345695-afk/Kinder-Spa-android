@@ -58,6 +58,16 @@ BEGIN RAISE EXCEPTION 'audit is append-only'; END;
 $$;
 CREATE TRIGGER audit_no_update BEFORE UPDATE OR DELETE ON audit_events
 FOR EACH ROW EXECUTE FUNCTION immutable_audit();
+-- Restrict the bot's row-lock-only UPDATE(column) grants. These identifiers
+-- are never mutated by the API; reject even an attempted no-op identifier write.
+-- SELECT ... FOR UPDATE / SHARE does not fire UPDATE triggers.
+CREATE FUNCTION immutable_identifier() RETURNS trigger LANGUAGE plpgsql AS $trigger$
+BEGIN RAISE EXCEPTION 'identity column is immutable'; END;
+$trigger$;
+CREATE TRIGGER accounts_id_immutable BEFORE UPDATE OF id ON accounts
+FOR EACH ROW EXECUTE FUNCTION immutable_identifier();
+CREATE TRIGGER subscriptions_id_immutable BEFORE UPDATE OF id ON subscriptions
+FOR EACH ROW EXECUTE FUNCTION immutable_identifier();
 -- Recipient is the configured superadministrator role, resolved by a future trusted sender.
 -- A pending row proves durable enqueueing, NOT Telegram delivery or owner approval.
 CREATE TABLE notification_outbox (
@@ -67,3 +77,10 @@ CREATE TABLE notification_outbox (
     kind text NOT NULL CHECK (kind = 'session_restored'),
     created_at timestamptz NOT NULL
 );
+
+-- The Telegram sender claims rows with FOR UPDATE, which needs UPDATE privilege.
+-- Block actual queue-row modification by that runtime role; delivery state lives
+-- in telegram_notification_batches and telegram_jobs instead.
+CREATE TRIGGER notification_outbox_no_update
+BEFORE UPDATE OR DELETE ON notification_outbox
+FOR EACH ROW EXECUTE FUNCTION immutable_audit();

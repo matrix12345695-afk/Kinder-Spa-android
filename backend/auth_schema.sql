@@ -15,6 +15,12 @@ CREATE TABLE auth_sessions (
     revoked boolean NOT NULL DEFAULT false
 );
 CREATE INDEX sessions_by_account ON auth_sessions(account_id,created_at);
+-- These identity columns support a column-scoped UPDATE permission only for
+-- SELECT ... FOR SHARE row locks. No actual identity mutation is permitted.
+CREATE TRIGGER credentials_account_immutable BEFORE UPDATE OF account_id ON credentials
+FOR EACH ROW EXECUTE FUNCTION immutable_identifier();
+CREATE TRIGGER sessions_token_immutable BEFORE UPDATE OF token_hash ON auth_sessions
+FOR EACH ROW EXECUTE FUNCTION immutable_identifier();
 CREATE TABLE login_buckets (
     scope_hash char(64) NOT NULL,
     window_start bigint NOT NULL,

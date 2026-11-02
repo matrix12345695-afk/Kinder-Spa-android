@@ -1,4 +1,4 @@
-# Kinder Render API/admin pilot. No database, disk or paid compute is created.
+# Kinder Render API/admin pilot. Defaults to standby: no database or client access.
 # Bot worker is separate: backend/deploy/render-telegram.yaml ($7/month proposal).
 # This is a reviewable release definition, not an instruction to publish.
 previews:
@@ -8,7 +8,7 @@ services:
     name: kinder-spa-api
     runtime: python
     repo: https://github.com/matrix12345695-afk/Kinder-Spa-android
-    branch: feature/render-api-pilot
+    branch: review/kinder-db-ci-and-restore-gates-20261031
     rootDir: backend
     region: frankfurt
     plan: free
@@ -17,7 +17,7 @@ services:
     healthCheckPath: /health
     buildCommand: >-
       python -m pip install --require-hashes --only-binary=:all: -r requirements.lock -r gateway-requirements.lock
-    startCommand: python -m kinder.render_api --run
+    startCommand: python -m kinder.api_entry
     envVars:
       - key: PYTHON_VERSION
         value: '3.12.12'

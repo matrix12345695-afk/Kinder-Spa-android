@@ -183,10 +183,26 @@ class Sender:
                 who=self.bot.identity(conn,job['peer'],job['binding']) if job['binding'] is not None else None
                 if who and who['role']!=job['payload'].get('_role'):raise Unbound()
                 if job['outbox'] is not None and (not who or who['role']!='superadmin'):raise Unbound()
+                # Mandatory restoration reason is fetched from the append-only
+                # audit only AFTER recipient identity has been locked/validated.
+                # It is never copied to telegram_jobs.payload or retry receipts.
+                notification_text = None
+                if job['outbox'] is not None:
+                    row = conn.execute("""SELECT a.details->>'reason'
+                        FROM notification_outbox o JOIN audit_events a ON a.id=o.event_id
+                        WHERE o.id=%s AND o.kind='session_restored' AND a.operation='restore_pool'""",
+                        (job['outbox'],)).fetchone()
+                    if not row or not isinstance(row[0], str) or not 3 <= len(row[0].strip()) <= 500:
+                        raise Rejected('notification_reason_unavailable')
+                    # Avoid forged Telegram message headers or multiline
+                    # instructions embedded in staff-entered free text.
+                    reason = ' '.join(row[0].split())
+                    label = 'Sabab: ' if who['language']=='uz' else 'Причина: '
+                    notification_text = job['payload']['text'] + '\n' + label + reason
                 if photo:
                     response=self.api.call('sendPhoto',{'chat_id':job['peer'],'caption':tr('qr',who['language'])%seconds,'protect_content':'true'},photo=photo)
                 else:
-                    value={'chat_id':job['peer'],'text':link_text or job['payload']['text'],'protect_content':True}
+                    value={'chat_id':job['peer'],'text':notification_text or link_text or job['payload']['text'],'protect_content':True}
                     if 'reply_markup' in job['payload']:value['reply_markup']=job['payload']['reply_markup']
                     response=self.api.call('sendMessage',value)
                 if (not isinstance(response,dict) or type(response.get('message_id')) is not int or response['message_id']<=0
