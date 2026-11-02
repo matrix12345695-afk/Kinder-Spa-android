@@ -33,8 +33,17 @@ class Chat:
         assert req_status == 200
 
     def last(self, method='sendMessage'):
-        rows = self.fake.take(method, self.id)
-        return rows[-1] if rows else None
+        if method != 'sendMessage':
+            rows = self.fake.take(method, self.id)
+            return rows[-1] if rows else None
+        with self.fake.lock:
+            rows = [p for m, p in self.fake.calls if p.get('chat_id') == self.id and
+                    (m == 'sendMessage' or (m == 'sendPhoto' and 'caption' in p))]
+        if not rows:
+            return None
+        row = dict(rows[-1])
+        row.setdefault('text', row.get('caption', ''))
+        return row
 
     def login(self, login, password):
         self.send('/start')
@@ -280,9 +289,12 @@ def test_uzbek_language(owner, chat, fake_telegram, clock):
     clock(datetime(2027, 2, 1, 9, 0, tzinfo=TZ))
     cid, sid, cred = parent(owner, "O'zbek Ota-ona")
     chat.send('/start')
-    assert fake_telegram.take('sendMessage', chat.id)[-2]['reply_markup']['inline_keyboard'][0][1]['callback_data'] == 'lang:uz'
+    assert fake_telegram.take('sendMessage', chat.id)[-1]['reply_markup']['inline_keyboard'][0][1]['callback_data'] == 'lang:uz'
+    banner = fake_telegram.take('sendPhoto', chat.id)[-1]
+    assert banner['photo'] == 'https://kinder.test/assets/img/welcome-ru.png' and 'Добро пожаловать' in banner['caption']
     chat.press('lang:uz')
     assert 'login' in chat.last()['text'] and 'Assalomu alaykum' in chat.last()['text']
+    assert fake_telegram.take('sendPhoto', chat.id)[-1]['photo'].endswith('welcome-uz.png')
     chat.send(cred['login'])
     assert 'parol' in chat.last()['text']
     chat.send(cred['password'])

@@ -371,6 +371,19 @@ def handle_update(db, tg, update, public_url=''):
         _dispatch(c, tg, msg['chat']['id'], text, (msg.get('from') or {}).get('first_name', ''), msg.get('message_id'), public_url)
 
 
+def send_welcome(tg, chat_id, lang, caption, markup):
+    """Branded banner with the greeting as caption; falls back to plain text."""
+    if PUBLIC_URL.startswith('https://'):
+        caption = caption + '\n\n' + t(lang, 'site', url=f'{PUBLIC_URL}/?lang={lang}')
+        try:
+            tg.call('sendPhoto', chat_id=chat_id, photo=f'{PUBLIC_URL}/assets/img/welcome-{i18n.norm(lang)}.png',
+                    caption=caption[:1024], parse_mode='HTML', reply_markup=markup)
+            return
+        except TelegramError:
+            pass
+    tg.send(chat_id, caption, markup)
+
+
 def _ensure_chat(c, chat_id, first_name):
     c.execute('''INSERT INTO telegram_chats(chat_id, first_name) VALUES (%s,%s)
         ON CONFLICT (chat_id) DO UPDATE SET first_name=EXCLUDED.first_name, updated_at=now()''', (chat_id, first_name[:100]))
@@ -387,7 +400,7 @@ def _set_lang(c, tg, chat_id, message_id, lang, first_name):
         tg.send(chat_id, help_text(user, lang), menu_for(user, lang))
     else:
         set_state(c, chat_id, 'await_login')
-        tg.send(chat_id, t(lang, 'welcome'), NO_MENU)
+        send_welcome(tg, chat_id, lang, t(lang, 'welcome'), NO_MENU)
 
 
 def _dispatch(c, tg, chat_id, text, first_name, message_id, public_url):
@@ -418,8 +431,10 @@ def _dispatch(c, tg, chat_id, text, first_name, message_id, public_url):
 
     if command == '/start':
         name = user['full_name'] or first_name
-        greet = f'Здравствуйте, {e(name)}! 👋' if is_staff(user) else t(lang, 'hello', name=e(name))
-        tg.send(chat_id, greet + '\n\n' + help_text(user, lang), menu_for(user, lang))
+        if is_staff(user):
+            tg.send(chat_id, f'Здравствуйте, {e(name)}! 👋\n\n' + HELP_STAFF, staff_menu())
+        else:
+            send_welcome(tg, chat_id, lang, t(lang, 'hello', name=e(name)) + '\n\n' + help_text(user, lang), client_menu(lang))
         return
     if command == '/help' or button == 'btn_help' or text == BTN_HELP:
         tg.send(chat_id, help_text(user, lang), menu_for(user, lang))
@@ -436,7 +451,7 @@ def _login_flow(c, tg, chat, text, command, message_id):
             c.execute('UPDATE telegram_chats SET lang_chosen=true WHERE chat_id=%s', (chat_id,))
             tg.send(chat_id, t(lang, 'choose_lang'), LANG_KB)
         set_state(c, chat_id, 'await_login')
-        tg.send(chat_id, t(lang, 'welcome'), NO_MENU)
+        send_welcome(tg, chat_id, lang, t(lang, 'welcome'), NO_MENU)
         return
     if chat['state'] == 'await_login':
         try:
@@ -741,5 +756,18 @@ def setup_webhook(tg, public_url):
     tg.call('setWebhook', url=url, secret_token=webhook_secret(tg.token),
             allowed_updates=['message', 'callback_query'], max_connections=10)
     tg.call('setMyCommands', commands=COMMANDS)
-    tg.call('setMyDescription', description='Бот детского центра Kinder Spa: QR-код для входа, абонементы, посещения и напоминания.')
+    desc = {'ru': ('Kinder Spa ❤️ детский массаж, гидромассаж и бассейн.\n\nЗапись на занятия, QR-код для входа, абонементы, '
+                   'история посещений и напоминания — всё в одном боте. Логин и пароль выдают на ресепшене.',
+                   'Запись, QR-код и абонементы Kinder Spa ❤️'),
+            'uz': ("Kinder Spa ❤️ bolalar massaji, gidromassaj va basseyn.\n\nMashg'ulotlarga yozilish, kirish uchun QR-kod, "
+                   'abonementlar, tashriflar tarixi va eslatmalar — barchasi bitta botda. Login va parol qabulxonada beriladi.',
+                   'Kinder Spa: yozilish, QR-kod va abonementlar ❤️')}
+    for code, (long_d, short_d) in desc.items():
+        lang_code = None if code == 'ru' else code
+        tg.call('setMyDescription', description=long_d, language_code=lang_code)
+        tg.call('setMyShortDescription', short_description=short_d, language_code=lang_code)
+    tg.call('setMyCommands', commands=[{'command': 'start', 'description': 'Boshlash / menyu'}, {'command': 'qr', 'description': 'Qabulxona uchun QR-kod'},
+                                       {'command': 'book', 'description': 'Yozilish'}, {'command': 'bookings', 'description': 'Yozuvlarim'},
+                                       {'command': 'subs', 'description': 'Abonementlarim'}, {'command': 'lang', 'description': 'Til / Язык'},
+                                       {'command': 'logout', 'description': 'Chiqish'}], language_code='uz')
     return url

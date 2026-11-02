@@ -1207,6 +1207,41 @@ def catalog(x):
     return {'services': services_list(x), 'specialists': specialists_list(x), 'plans': plans_query(x, True)}
 
 
+# ---------------------------------------------------------------- centre settings
+
+SETTING_KEYS = ('phone', 'address', 'hours', 'instagram', 'map_url', 'about_ru', 'about_uz')
+
+
+def load_settings(x):
+    rows = {r['key']: r['value'] for r in x.all('SELECT key, value FROM center_settings')}
+    return {k: rows.get(k, '') for k in SETTING_KEYS}
+
+
+@api('/settings', roles=None)
+def settings_get(x):
+    out = load_settings(x)
+    out['bot_username'] = getattr(x.request.app.state, 'bot_username', '') or ''
+    return out
+
+
+@api('/settings', ('PATCH',), roles=('superadmin',))
+def settings_update(x):
+    changed = {}
+    with x.c.transaction():
+        for k in SETTING_KEYS:
+            if k in x.body:
+                v = text(x.body, k, max_len=2000)
+                if k in ('instagram', 'map_url') and v and not re.fullmatch(r'https://[^\s<>"]{3,500}', v):
+                    if k == 'instagram' and re.fullmatch(r'@?[A-Za-z0-9_.]{1,30}', v):
+                        v = 'https://instagram.com/' + v.lstrip('@')
+                    else:
+                        raise ApiError(400, 'invalid_field', k)
+                x.c.execute('INSERT INTO center_settings(key, value) VALUES (%s,%s) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value', (k, v))
+                changed[k] = v
+        x.audit('update_settings', 'system', None, fields=sorted(changed))
+    return {'ok': True}
+
+
 # ---------------------------------------------------------------- reports & audit
 
 @api('/reports')
@@ -1341,6 +1376,8 @@ class SecurityHeaders:
                     headers.append((b'strict-transport-security', b'max-age=31536000'))
                 if api_path and b'cache-control' not in names:
                     headers.append((b'cache-control', b'no-store'))
+                elif scope['path'].startswith(('/assets/fonts/', '/assets/img/')) and b'cache-control' not in names:
+                    headers.append((b'cache-control', b'public, max-age=604800'))
                 message['headers'] = headers
             await send(message)
         await self.app(scope, receive, wrapped)
@@ -1372,13 +1409,19 @@ def create_app(database_url=None, connect=None, migrate=True, telegram_api=None)
     tgbot.PUBLIC_URL = public_url
 
     @asynccontextmanager
-    async def lifespan(app):
+    async def lifespan(starlette_app):
         await startup()
         yield
 
     async def startup():
         if migrate:
             await run_in_threadpool(db.migrate)
+        if tg:
+            try:
+                me = await run_in_threadpool(tg.call, 'getMe')
+                app.state.bot_username = (me or {}).get('username', '') if isinstance(me, dict) else ''
+            except tgbot.TelegramError as err:
+                log.error('telegram getMe failed: %s', err)
         if tg and public_url:
             try:
                 url = await run_in_threadpool(tgbot.setup_webhook, tg, public_url)
@@ -1390,7 +1433,8 @@ def create_app(database_url=None, connect=None, migrate=True, telegram_api=None)
             created = await run_in_threadpool(bootstrap_superadmin, db, login_name, password)
             log.warning('superadmin bootstrap: %s', 'created' if created else 'skipped (already exists)')
 
-    routes = [Route('/health', health), Route('/', lambda r: RedirectResponse('/admin/')),
+    from . import site
+    routes = [Route('/health', health), Route('/', site.home), Mount('/assets', StaticFiles(directory=STATIC), name='assets'),
               Route('/admin', lambda r: RedirectResponse('/admin/')), Route('/admin/', admin_index),
               Mount('/admin/static', StaticFiles(directory=STATIC), name='static'),
               Route('/telegram/webhook', telegram_webhook, methods=['POST']),

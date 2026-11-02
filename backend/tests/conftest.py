@@ -120,7 +120,9 @@ class FakeTelegram:
                 if payload.get('chat_id') in fake.blocked:
                     body, code = {'ok': False, 'error_code': 403, 'description': 'Forbidden: bot was blocked by the user'}, 403
                 else:
-                    body, code = {'ok': True, 'result': {'message_id': mid} if method.startswith('send') else True}, 200
+                    result = {'message_id': mid} if method.startswith('send') else (
+                        {'id': 1, 'is_bot': True, 'username': 'kinder_test_bot'} if method == 'getMe' else True)
+                    body, code = {'ok': True, 'result': result}, 200
                 data = json.dumps(body).encode()
                 self.send_response(code)
                 self.send_header('Content-Type', 'application/json')

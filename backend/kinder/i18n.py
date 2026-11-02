@@ -25,9 +25,11 @@ T = {
     # ------------------------------------------------------------ login
     'choose_lang': {'ru': 'Выберите язык / Tilni tanlang:', 'uz': 'Выберите язык / Tilni tanlang:'},
     'lang_set': {'ru': 'Язык: русский.', 'uz': "Til: o'zbekcha."},
-    'welcome': {'ru': 'Здравствуйте! Это бот детского центра <b>Kinder Spa</b> 🩵\n\n'
+    'welcome': {'ru': 'Здравствуйте! 👋 Добро пожаловать в <b>Kinder Spa</b> — детский центр массажа, гидромассажа и бассейна ❤️\n\n'
+                      'Здесь можно записаться на занятие, показать QR-код на входе и следить за абонементом.\n\n'
                       'Чтобы войти, отправьте <b>логин</b>, который вам выдали на ресепшене.\nОтменить: /cancel',
-                'uz': 'Assalomu alaykum! Bu <b>Kinder Spa</b> bolalar markazining boti 🩵\n\n'
+                'uz': 'Assalomu alaykum! 👋 <b>Kinder Spa</b> — bolalar massaji, gidromassaj va basseyn markaziga xush kelibsiz ❤️\n\n'
+                      "Bu yerda mashg'ulotga yozilish, kirishda QR-kodni ko'rsatish va abonementni kuzatish mumkin.\n\n"
                       'Kirish uchun qabulxonada berilgan <b>login</b>ni yuboring.\nBekor qilish: /cancel'},
     'bad_login': {'ru': 'Логин состоит из латинских букв и цифр, например <code>kid12</code>. Попробуйте ещё раз.',
                   'uz': "Login lotin harflari va raqamlardan iborat, masalan <code>kid12</code>. Qaytadan urinib ko'ring."},
@@ -38,20 +40,21 @@ T = {
     'wrong_creds': {'ru': 'Неверный логин или пароль. Отправьте логин ещё раз или /cancel',
                     'uz': "Login yoki parol noto'g'ri. Loginni qayta yuboring yoki /cancel"},
     'access_disabled': {'ru': 'Доступ отключён. Обратитесь на ресепшен.', 'uz': "Kirish o'chirilgan. Qabulxonaga murojaat qiling."},
-    'logged_in': {'ru': 'Готово, {name}! ✅', 'uz': 'Tayyor, {name}! ✅'},
-    'hello': {'ru': 'Здравствуйте, {name}! 👋', 'uz': 'Assalomu alaykum, {name}! 👋'},
+    'logged_in': {'ru': 'Готово, {name}! ✅ Рады видеть вас в Kinder Spa ❤️', 'uz': "Tayyor, {name}! ✅ Sizni Kinder Spa'da ko'rganimizdan xursandmiz ❤️"},
+    'hello': {'ru': 'Здравствуйте, {name}! 👋 Рады снова видеть вас ❤️', 'uz': "Assalomu alaykum, {name}! 👋 Sizni yana ko'rganimizdan xursandmiz ❤️"},
+    'site': {'ru': '🌐 Наш сайт: {url}', 'uz': '🌐 Saytimiz: {url}'},
     'access_changed': {'ru': 'Доступ изменился (например, сброшен пароль). Войдите заново: /start',
                        'uz': "Kirish ma'lumotlari o'zgardi (masalan, parol yangilandi). Qaytadan kiring: /start"},
     'cancelled': {'ru': 'Отменено.', 'uz': 'Bekor qilindi.'},
     'logged_out': {'ru': 'Вы вышли. Чтобы войти снова, отправьте /start', 'uz': 'Siz chiqdingiz. Qayta kirish uchun /start yuboring'},
     'choose_action': {'ru': 'Выберите действие в меню ниже 👇', 'uz': 'Quyidagi menyudan tanlang 👇'},
-    'help': {'ru': 'Это бот детского центра <b>Kinder Spa</b>.\n\n'
+    'help': {'ru': '<b>Что умеет бот</b>\n\n'
                    '{qr} — покажите его на ресепшене, код действует 2 минуты.\n'
                    '{book} — выбрать услугу, день и время.\n{mine} — ваши записи и отмена.\n'
                    '{subs} — остаток посещений и срок.\n{visits} — история посещений.\n'
                    '{services} — массаж, гидромассаж, бассейн.\n\n'
                    'После каждого посещения сюда придёт уведомление, а за 3 дня до окончания абонемента — напоминание.',
-             'uz': 'Bu <b>Kinder Spa</b> bolalar markazining boti.\n\n'
+             'uz': '<b>Bot nimalar qila oladi</b>\n\n'
                    "{qr} — uni qabulxonada ko'rsating, kod 2 daqiqa amal qiladi.\n"
                    '{book} — xizmat, kun va vaqtni tanlash.\n{mine} — yozuvlaringiz va bekor qilish.\n'
                    '{subs} — qolgan tashriflar va muddat.\n{visits} — tashriflar tarixi.\n'

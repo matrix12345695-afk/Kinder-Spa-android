@@ -294,3 +294,19 @@ def test_input_validation(owner):
     assert owner.call('POST', '/api/clients', None)[0] in (400,)
     status, payload, _ = owner.call('POST', '/api/clients', raw=True, body=None)
     assert status == 400
+
+
+def test_public_site_and_settings(owner, anon, server):
+    owner.patch('/api/settings', {'phone': '+998 71 200 00 00', 'address': 'Ташкент, ул. Тестовая, 1', 'instagram': '@kinderspa'}, expect=200)
+    assert owner.patch('/api/settings', {'map_url': 'javascript:alert(1)'})[0] == 400
+    _, st = anon.get('/api/settings', expect=200)
+    assert st['instagram'] == 'https://instagram.com/kinderspa' and st['bot_username'] == 'kinder_test_bot'
+    for lang, words in (('ru', ['Массаж, гидромассаж и бассейн', 'Записаться в Telegram', 'https://t.me/kinder_test_bot', 'tel:+998712000000']),
+                        ('uz', ['Bolalar uchun massaj', 'Telegram orqali yozilish', 'Basseyn'])):
+        status, body, headers = anon.call('GET', f'/?lang={lang}', raw=True)
+        html = body.decode()
+        assert status == 200 and all(w in html for w in words), (lang, [w for w in words if w not in html])
+    assert anon.call('GET', '/assets/site.css', raw=True)[0] == 200
+    status, _, headers = anon.call('GET', '/assets/fonts/Unbounded.ttf', raw=True)
+    assert status == 200 and 'max-age' in headers['cache-control']
+    assert anon.call('GET', '/assets/img/welcome-ru.png', raw=True)[0] == 200

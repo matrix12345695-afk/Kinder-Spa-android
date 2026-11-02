@@ -10,7 +10,8 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 MIGRATIONS = [HERE / 'schema.sql', HERE / 'schema_002_telegram.sql', HERE / 'schema_003_payments.sql',
-              HERE / 'schema_004_schedule.sql', HERE / 'schema_005_lang.sql']  # append new files, never edit applied ones
+              HERE / 'schema_004_schedule.sql', HERE / 'schema_005_lang.sql',
+              HERE / 'schema_006_settings.sql']  # append new files, never edit applied ones
 
 
 def psycopg_connect(url):

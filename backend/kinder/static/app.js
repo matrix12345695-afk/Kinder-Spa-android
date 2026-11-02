@@ -42,6 +42,7 @@ const ACTIONS = {
   export: 'Выгрузка отчёта', export_backup: 'Резервная копия', payment: 'Оплата', void_payment: 'Отмена оплаты', telegram_link: 'Вход в Telegram-бот',
   create_slot: 'Новое занятие', generate_slots: 'Создано расписание', update_slot: 'Изменение занятия', cancel_slot: 'Отмена занятия',
   book: 'Запись', cancel_booking: 'Отмена записи', no_show: 'Неявка',
+  update_settings: 'Изменение настроек центра',
   create_plan: 'Новый тариф', update_plan: 'Изменение тарифа', bootstrap_superadmin: 'Создан главный администратор',
 };
 
@@ -166,27 +167,32 @@ function logout(silent) {
 }
 function renderLogin() {
   const err = h('div', { class: 'error-text' });
-  const form = h('form', { class: 'card login', onsubmit: async (e) => {
+  const form = h('form', { class: 'login', onsubmit: async (e) => {
     e.preventDefault(); err.textContent = '';
     const d = readForm(form);
     try {
       const r = await api('POST', '/login', { login: d.login, password: d.password });
-      if (r.role === 'client') { err.textContent = 'Это вход для сотрудников. Клиенты пользуются приложением.'; state.token = r.token; await api('POST', '/logout').catch(() => {}); state.token = null; return; }
+      if (r.role === 'client') { err.textContent = 'Это вход для сотрудников. Клиенты пользуются Telegram-ботом.'; state.token = r.token; await api('POST', '/logout').catch(() => {}); state.token = null; return; }
       state.token = r.token; localStorage.setItem('kinder_token', r.token); start();
     } catch (ex) { err.textContent = errText(ex); }
   } },
-  h('div', { class: 'brand' }, h('img', { src: '/admin/static/icon.svg', alt: '' }), 'Kinder Spa'),
+  h('h1', {}, 'Вход для сотрудников'), h('p', { class: 'muted' }, 'Логин и пароль выдаёт главный администратор.'),
   h('div', { class: 'stack' },
     field('Логин', h('input', { name: 'login', autocomplete: 'username', required: true, autocapitalize: 'none' })),
     field('Пароль', h('input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true })),
     err, h('button', { class: 'btn primary', type: 'submit' }, 'Войти')));
-  $('#app').replaceChildren(h('div', { class: 'login-wrap' }, form));
+  $('#app').replaceChildren(h('div', { class: 'login-wrap' },
+    h('div', { class: 'login-art' }, h('div', { class: 'rings', 'aria-hidden': 'true' }),
+      h('div', { class: 'brand' }, h('img', { src: '/admin/static/icon.svg', alt: '' }), 'Kinder Spa'),
+      h('p', {}, 'Абонементы, запись и посещения в одном месте')),
+    h('div', { class: 'login-side' }, form)));
+  form.querySelector('input').focus();
 }
 
 const PAGES = [
   ['today', 'Сегодня'], ['scan', 'Сканер QR'], ['clients', 'Клиенты'], ['subscriptions', 'Абонементы'], ['schedule', 'Расписание'], ['visits', 'Посещения'], ['cash', 'Касса'],
   ['services', 'Услуги'], ['specialists', 'Специалисты'], ['plans', 'Тарифы'], ['reports', 'Отчёты'],
-  ['staff', 'Сотрудники', 'superadmin'], ['audit', 'Журнал'],
+  ['staff', 'Сотрудники', 'superadmin'], ['settings', 'Настройки центра', 'superadmin'], ['audit', 'Журнал'],
 ];
 
 function shell() {
@@ -195,6 +201,7 @@ function shell() {
     PAGES.filter((p) => !p[2] || p[2] === state.me.role).map(([id, title]) =>
       h('button', { class: 'nav-btn' + (state.page === id || (state.page === 'client' && id === 'clients') ? ' active' : ''), 'data-page': id, onclick: () => go(id) }, title)),
     h('div', { class: 'spacer' }),
+    h('a', { class: 'site-link', href: '/', target: '_blank', rel: 'noopener' }, 'Открыть сайт центра'),
     h('div', { class: 'user-box' }, h('div', { class: 'name' }, state.me.full_name || state.me.login),
       h('div', {}, state.me.role === 'superadmin' ? 'Главный администратор' : 'Администратор'),
       h('div', { class: 'row' }, h('button', { class: 'btn small', onclick: changePassword }, 'Пароль'),
@@ -220,7 +227,7 @@ function go(page, arg) {
   const main = $('#main');
   main.append(h('div', { class: 'muted' }, 'Загрузка…'));
   const render = { today: pageToday, scan: pageScan, clients: pageClients, client: pageClient, subscriptions: pageSubscriptions,
-    visits: pageVisits, cash: pageCash, schedule: pageSchedule, services: pageServices, specialists: pageSpecialists, plans: pagePlans, reports: pageReports, staff: pageStaff, audit: pageAudit }[page] || pageToday;
+    visits: pageVisits, cash: pageCash, schedule: pageSchedule, services: pageServices, specialists: pageSpecialists, plans: pagePlans, reports: pageReports, staff: pageStaff, audit: pageAudit, settings: pageSettings }[page] || pageToday;
   Promise.resolve(render(main, arg)).catch((e) => { main.replaceChildren(h('div', { class: 'card' }, errText(e))); });
 }
 async function start() {
@@ -372,7 +379,7 @@ function subCard(s, kids, specialists, reload) {
       h('div', { class: 'muted small' }, fmtDate(s.starts_on), ' — ', fmtDate(s.ends_on), s.frozen_since ? ` · заморожен с ${fmtDate(s.frozen_since)}` : '', ' · ', fmtMoney(s.price), ' ', payBadge(s))),
     itemsView(s.items),
     h('div', { class: 'row' },
-      Number(s.debt) > 0 ? h('button', { class: 'btn small primary', onclick: () => takePayment(s, reload) }, 'Принять оплату') : null,
+      Number(s.debt) > 0 ? h('button', { class: 'btn small accent', onclick: () => takePayment(s, reload) }, 'Принять оплату') : null,
       live ? h('button', { class: 'btn primary small', onclick: () => markVisit(s, kids, specialists, reload) }, 'Отметить посещение') : null,
       s.status === 'active' && s.state !== 'expired' ? h('button', { class: 'btn small', onclick: () => askReason('Заморозить абонемент', null, async (d) => { await api('POST', `/subscriptions/${s.id}/freeze`, d); toast('Заморожен'); reload(); }) }, 'Заморозить') : null,
       s.status === 'frozen' ? h('button', { class: 'btn small', onclick: () => guard(async () => { const r = await api('POST', `/subscriptions/${s.id}/unfreeze`); toast(r.frozen_days ? `Разморожен, срок продлён на ${r.frozen_days} дн.` : 'Разморожен'); reload(); }) }, 'Разморозить') : null,
@@ -535,7 +542,7 @@ function visitsTable(rows, { compact, onChange, hideClient } = {}) {
   return h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Время'), hideClient ? null : h('th', {}, 'Клиент'), h('th', {}, 'Услуга'),
     compact ? null : h('th', {}, 'Специалист'), compact ? null : h('th', {}, 'Отметил'), h('th', {}, ''))),
   h('tbody', {}, rows.map((v) => h('tr', { class: v.cancelled_at ? 'cancelled' : '' },
-    h('td', { class: 'small' }, fmtDateTime(v.visited_at), v.method === 'qr' ? h('span', { class: 'badge' }, ' QR') : null,
+    h('td', { class: 'small' }, compact ? fmtTime(v.visited_at) : fmtDateTime(v.visited_at), v.method === 'qr' ? h('span', { class: 'badge' }, ' QR') : null,
       v.method === 'late_cancel' ? h('span', { class: 'badge bad' }, 'поздняя отмена') : null, v.method === 'no_show' ? h('span', { class: 'badge bad' }, 'неявка') : null),
     hideClient ? null : h('td', {}, h('a', { href: '#client/' + v.client_id, onclick: (e) => { e.preventDefault(); go('client', v.client_id); } }, v.client_name), v.child_name ? h('div', { class: 'small muted' }, v.child_name) : null),
     h('td', {}, v.service_name, compact ? null : h('div', { class: 'small muted' }, v.subscription_name)),
@@ -882,6 +889,25 @@ function newStaff(done) {
     field('Логин *', h('input', { name: 'login', required: true, pattern: '[a-z0-9][a-z0-9_.\\-]{2,63}', autocapitalize: 'none' })),
     field('Роль', h('select', { name: 'role' }, h('option', { value: 'admin' }, 'Администратор (ресепшен)'), h('option', { value: 'superadmin' }, 'Главный администратор')))),
   { okText: 'Создать', onOk: async (f) => { const d = readForm(f); const r = await api('POST', '/staff', d); done(); setTimeout(() => showSecret('Сотрудник создан', r.login, r.password, 'Передайте данные сотруднику, пароль показывается один раз.'), 50); } });
+}
+async function pageSettings(main) {
+  const s = await api('GET', '/settings');
+  const form = h('form', { class: 'card stack', onsubmit: async (e) => {
+    e.preventDefault();
+    await guard(() => api('PATCH', '/settings', readForm(form)), 'Сохранено');
+  } },
+  h('p', { class: 'muted' }, 'Эти данные показываются на сайте центра и помогают родителям найти вас.'),
+  h('div', { class: 'row' }, field('Телефон', h('input', { name: 'phone', value: s.phone, placeholder: '+998 71 000 00 00' })),
+    field('Часы работы', h('input', { name: 'hours', value: s.hours, placeholder: 'Пн–Сб, 9:00–19:00' }))),
+  field('Адрес', h('input', { name: 'address', value: s.address })),
+  h('div', { class: 'row' }, field('Instagram (ссылка или @имя)', h('input', { name: 'instagram', value: s.instagram })),
+    field('Ссылка на карту', h('input', { name: 'map_url', value: s.map_url, placeholder: 'https://yandex.uz/maps/...' }))),
+  field('О центре (русский)', h('textarea', { name: 'about_ru' }, s.about_ru)),
+  field('О центре (узбекский)', h('textarea', { name: 'about_uz' }, s.about_uz)),
+  h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'submit' }, 'Сохранить'),
+    h('a', { class: 'btn', href: '/', target: '_blank', rel: 'noopener' }, 'Посмотреть сайт'),
+    s.bot_username ? h('span', { class: 'muted small' }, 'Бот: @', s.bot_username) : null));
+  main.replaceChildren(h('h1', {}, 'Настройки центра'), form);
 }
 async function pageAudit(main) {
   const rows = await api('GET', '/audit?limit=300');
