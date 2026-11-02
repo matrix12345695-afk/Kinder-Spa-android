@@ -274,3 +274,39 @@ def test_bot_booking_flow(owner, chat, fake_telegram, clock, server):
     assert 'запись сохранена' in fake_telegram.take('editMessageText', chat.id)[-1]['text']
     chat.press(warn['reply_markup']['inline_keyboard'][0][0]['callback_data'])
     assert 'Посещение списано' in fake_telegram.take('editMessageText', chat.id)[-1]['text']
+
+
+def test_uzbek_language(owner, chat, fake_telegram, clock):
+    clock(datetime(2027, 2, 1, 9, 0, tzinfo=TZ))
+    cid, sid, cred = parent(owner, "O'zbek Ota-ona")
+    chat.send('/start')
+    assert fake_telegram.take('sendMessage', chat.id)[-2]['reply_markup']['inline_keyboard'][0][1]['callback_data'] == 'lang:uz'
+    chat.press('lang:uz')
+    assert 'login' in chat.last()['text'] and 'Assalomu alaykum' in chat.last()['text']
+    chat.send(cred['login'])
+    assert 'parol' in chat.last()['text']
+    chat.send(cred['password'])
+    welcome = chat.last()
+    assert 'Tayyor' in welcome['text']
+    labels = [b['text'] for row in welcome['reply_markup']['keyboard'] for b in row]
+    assert '📱 QR-kod' in labels and '📅 Yozilish' in labels and '🌐 Til' in labels
+
+    chat.send('🎫 Abonementlarim')
+    assert 'Basseyn: <b>8</b> / 8' in chat.last()['text'] and 'faol' in chat.last()['text']
+    owner.post('/api/visits', {'subscription_id': sid, 'service_id': pool_id(owner)}, expect=200)
+    note = fake_telegram.wait('sendMessage', chat.id, 'Tashrif belgilandi')
+    assert '<b>Basseyn</b>' in note['text'] and 'Qoldi: <b>7</b> / 8' in note['text']
+    owner.post(f'/api/subscriptions/{sid}/payments', {'amount': '0.01', 'method': 'cash'})  # price 0 -> overpayment, no message
+
+    _, slot = owner.post('/api/slots', {'service_id': pool_id(owner), 'date': '2027-02-03', 'time': '15:00', 'capacity': 2}, expect=200)
+    chat.send('📅 Yozilish')
+    assert 'Xizmatni tanlang' in chat.last()['text']
+    chat.press(f"bt:{slot['id']}")
+    assert 'Siz yozildingiz' in fake_telegram.take('editMessageText', chat.id)[-1]['text']
+    assert 'soat 15:00' in fake_telegram.take('editMessageText', chat.id)[-1]['text']
+
+    # switch back to Russian
+    chat.send('🌐 Til')
+    chat.press('lang:ru')
+    chat.send('🎫 Мои абонементы')
+    assert 'Бассейн: <b>7</b> из 8' in chat.last()['text']

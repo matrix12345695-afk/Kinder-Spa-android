@@ -1,9 +1,10 @@
 """Kinder Spa Telegram bot: webhook mode inside the web service (no separate worker).
 
-Parents log in with the login/password issued at reception and get their QR code,
-subscriptions, visits and the service catalogue. Staff get a daily digest and a
-"today" summary. Notifications go through telegram_outbox (written inside the
-business transaction) and are sent after commit or by the daily cron call.
+Parents (RU/UZ) log in with the login/password issued at reception and get their QR
+code, bookings, subscriptions, visits and the catalogue. Staff (RU) get a QR scanner
+Mini App, schedule, a "today" summary and a morning digest. Notifications go through
+telegram_outbox (written inside the business transaction, rendered in each chat's
+language) and are sent after commit or by the daily cron call.
 """
 import hashlib
 import hmac
@@ -16,25 +17,41 @@ import urllib.error
 import urllib.request
 from datetime import timedelta
 
+from . import i18n
 from . import security as sec
+from .i18n import t
 from .qr import qr_png
 
 log = logging.getLogger('kinder.telegram')
 
-BTN_QR, BTN_SUBS, BTN_VISITS, BTN_SERVICES, BTN_HELP, BTN_LOGOUT = (
-    '📱 QR-код', '🎫 Мои абонементы', '🕘 Посещения', '💆 Услуги', '❓ Помощь', '🚪 Выйти')
-BTN_TODAY, BTN_ENDING, BTN_SCHEDULE = '📊 Сегодня', '⏳ Заканчиваются', '🗓 Расписание'
-BTN_BOOK, BTN_MY_BOOKINGS = '📅 Записаться', '🗓 Мои записи'
-CLIENT_MENU = {'keyboard': [[{'text': BTN_QR}], [{'text': BTN_BOOK}, {'text': BTN_MY_BOOKINGS}],
-                            [{'text': BTN_SUBS}, {'text': BTN_VISITS}],
-                            [{'text': BTN_SERVICES}, {'text': BTN_HELP}], [{'text': BTN_LOGOUT}]],
-               'resize_keyboard': True, 'is_persistent': True}
-STAFF_MENU = {'keyboard': [[{'text': BTN_TODAY}, {'text': BTN_ENDING}], [{'text': BTN_HELP}, {'text': BTN_LOGOUT}]],
-              'resize_keyboard': True, 'is_persistent': True}
+BTN_TODAY, BTN_ENDING, BTN_SCHEDULE, BTN_HELP, BTN_LOGOUT = '📊 Сегодня', '⏳ Заканчиваются', '🗓 Расписание', '❓ Помощь', '🚪 Выйти'
+BTN_SCAN = '📷 Сканировать QR'
+# Russian labels kept as module constants for staff code and tests.
+BTN_QR, BTN_SUBS, BTN_VISITS, BTN_SERVICES = (i18n.T[k]['ru'] for k in ('btn_qr', 'btn_subs', 'btn_visits', 'btn_services'))
+BTN_BOOK, BTN_MY_BOOKINGS = i18n.T['btn_book']['ru'], i18n.T['btn_my_bookings']['ru']
 NO_MENU = {'remove_keyboard': True}
-STATE_NAMES = {'active': 'активен', 'frozen': 'заморожен', 'closed': 'закрыт', 'expired': 'истёк',
-               'used_up': 'использован', 'not_started': 'ещё не начался'}
+PUBLIC_URL = ''  # set by the app at startup
 e = html.escape
+
+
+def client_menu(lang):
+    b = lambda k: {'text': t(lang, k)}
+    return {'keyboard': [[b('btn_qr')], [b('btn_book'), b('btn_my_bookings')], [b('btn_subs'), b('btn_visits')],
+                         [b('btn_services'), b('btn_help')], [b('btn_lang'), b('btn_logout')]],
+            'resize_keyboard': True, 'is_persistent': True}
+
+
+CLIENT_MENU = client_menu('ru')
+
+
+def staff_menu():
+    rows = [[{'text': BTN_TODAY}, {'text': BTN_SCHEDULE}], [{'text': BTN_ENDING}, {'text': BTN_HELP}], [{'text': BTN_LOGOUT}]]
+    if PUBLIC_URL.startswith('https://'):
+        rows.insert(0, [{'text': BTN_SCAN, 'web_app': {'url': PUBLIC_URL + '/tg/scan'}}])
+    return {'keyboard': rows, 'resize_keyboard': True, 'is_persistent': True}
+
+
+LANG_KB = {'inline_keyboard': [[{'text': '🇷🇺 Русский', 'callback_data': 'lang:ru'}, {'text': "🇺🇿 O'zbekcha", 'callback_data': 'lang:uz'}]]}
 
 
 class TelegramError(Exception):
@@ -128,6 +145,9 @@ class TelegramAPI:
 
 # ------------------------------------------------------------------ helpers
 
+
+# ------------------------------------------------------------------ helpers
+
 class DbCtx:
     """Minimal stand-in for app.Ctx so the app's query helpers can be reused."""
     def __init__(self, c, user=None):
@@ -139,8 +159,8 @@ class DbCtx:
     def all(self, sql, args=()):
         return self.c.execute(sql, args).fetchall()
 
-    def notify_client(self, client_id, text):
-        enqueue_for_client(self.c, client_id, text)
+    def notify_client(self, client_id, key, **params):
+        enqueue_for_client(self.c, client_id, key, **params)
 
     def audit(self, action, entity, entity_id=None, **details):
         self.c.execute('INSERT INTO audit_log(actor_id, action, entity, entity_id, details) VALUES (%s,%s,%s,%s,%s::jsonb)',
@@ -153,10 +173,9 @@ def d(value):
 
 
 def client_chats(c, client_id):
-    rows = c.execute('''SELECT tc.chat_id FROM telegram_chats tc JOIN users u ON u.id = tc.user_id
+    return c.execute('''SELECT tc.chat_id, tc.lang FROM telegram_chats tc JOIN users u ON u.id = tc.user_id
         JOIN clients cl ON cl.user_id = u.id
         WHERE cl.id = %s AND u.enabled AND tc.cred_version = u.cred_version''', (client_id,)).fetchall()
-    return [r['chat_id'] for r in rows]
 
 
 def staff_chats(c):
@@ -171,13 +190,21 @@ def enqueue(c, chat_ids, text):
     return len(chat_ids)
 
 
-def enqueue_for_client(c, client_id, text):
-    """Called inside business transactions. Returns number of queued messages."""
-    return enqueue(c, client_chats(c, client_id), text)
+def enqueue_for_client(c, client_id, key, **params):
+    """Queue a parent notification rendered in each linked chat's language. Called inside business transactions."""
+    chats = client_chats(c, client_id)
+    for ch in chats:
+        c.execute('INSERT INTO telegram_outbox(chat_id, text) VALUES (%s,%s)', (ch['chat_id'], t(ch['lang'], key, **params)))
+    return len(chats)
 
 
-def items_text(items):
-    return ', '.join(f"{e(i['name_ru'])}: <b>{i['remaining']}</b> из {i['quota']}" for i in items)
+def items_text(items, lang='ru'):
+    return ', '.join(t(lang, 'item', name=i18n.name(i['name_ru'], i.get('name_uz')), rem=i['remaining'], quota=i['quota'])
+                     for i in items)
+
+
+def items_both(items):
+    return {lang: items_text(items, lang) for lang in i18n.LANGS}
 
 
 # ------------------------------------------------------------------ outbox
@@ -215,40 +242,38 @@ def flush_outbox(db, tg, limit=50):
 
 def daily(db, tg):
     from . import app as A
-    t = A.today()
+    from . import schedule as S
+    today = A.today()
     out = {'reminders': 0, 'digests': 0}
     with db.conn() as c, c.transaction():
         x = DbCtx(c)
-        ending = A.subscriptions_for(x, "s.status='active' AND s.ends_on BETWEEN %s AND %s", (t, t + timedelta(days=3)))
+        ending = A.subscriptions_for(x, "s.status='active' AND s.ends_on BETWEEN %s AND %s", (today, today + timedelta(days=3)))
         for s in ending:
             if s['state'] != 'active':
                 continue
             if c.execute("INSERT INTO reminders_sent VALUES (%s,'ends_soon',%s) ON CONFLICT DO NOTHING RETURNING 1",
-                         (s['id'], t)).fetchone():
-                days = (s['ends_on'] - t).days
-                when = 'сегодня' if days == 0 else ('завтра' if days == 1 else f'через {days} дн. ({d(s["ends_on"])})')
-                out['reminders'] += enqueue_for_client(c, s['client_id'],
-                    f"⏳ Абонемент <b>{e(s['name'])}</b> заканчивается {when}.\nОсталось: {items_text(s['items'])}.\n"
-                    'Чтобы продлить, обратитесь на ресепшен.')
-        expired = A.subscriptions_for(x, "s.status='active' AND s.ends_on = %s", (t - timedelta(days=1),))
+                         (s['id'], today)).fetchone():
+                days = (s['ends_on'] - today).days
+                when = i18n.both('today') if days == 0 else (i18n.both('tomorrow') if days == 1 else
+                                                              i18n.both('in_days', n=days, date=d(s['ends_on'])))
+                out['reminders'] += enqueue_for_client(c, s['client_id'], 'n_ends_soon', name=e(s['name']), when=when,
+                                                       items=items_both(s['items']))
+        expired = A.subscriptions_for(x, "s.status='active' AND s.ends_on = %s", (today - timedelta(days=1),))
         for s in expired:
             left = sum(i['remaining'] for i in s['items'])
             if left and c.execute("INSERT INTO reminders_sent VALUES (%s,'expired',%s) ON CONFLICT DO NOTHING RETURNING 1",
-                                  (s['id'], t)).fetchone():
-                out['reminders'] += enqueue_for_client(c, s['client_id'],
-                    f"⌛ Срок абонемента <b>{e(s['name'])}</b> истёк, неиспользованных посещений: {left}.\n"
-                    'Если нужно продлить, обратитесь на ресепшен.')
-        from . import schedule as S
+                                  (s['id'], today)).fetchone():
+                out['reminders'] += enqueue_for_client(c, s['client_id'], 'n_expired', name=e(s['name']), left=left)
         for b in S.bookings_query(x, "b.status='booked' AND (sl.starts_at AT TIME ZONE 'Asia/Tashkent')::date = %s",
-                                  (t + timedelta(days=1),)):
+                                  (today + timedelta(days=1),)):
             if c.execute("INSERT INTO reminders_sent VALUES (%s,%s,%s) ON CONFLICT DO NOTHING RETURNING 1",
-                         (b['subscription_id'], f"booking:{b['id']}", t)).fetchone():
+                         (b['subscription_id'], f"booking:{b['id']}", today)).fetchone():
                 who = f" ({e(b['child_name'])})" if b['child_name'] else ''
-                out['reminders'] += enqueue_for_client(c, b['client_id'],
-                    f"🔔 Напоминаем: завтра <b>{e(b['service_name'])}</b>{who} в {S.local(b['starts_at']).strftime('%H:%M')}.\n"
-                    f"Если не получается, отмените запись до 19:00 сегодня: {BTN_MY_BOOKINGS}")
-        if c.execute("INSERT INTO job_runs VALUES ('staff_digest', %s) ON CONFLICT DO NOTHING RETURNING 1", (t,)).fetchone():
-            out['digests'] = enqueue(c, staff_chats(c), staff_summary(x, t - timedelta(days=1), title='Сводка за вчера'))
+                out['reminders'] += enqueue_for_client(
+                    c, b['client_id'], 'n_booking_reminder', service=i18n.name(e(b['service_name']), e(b.get('service_name_uz') or '')),
+                    who=who, time=S.local(b['starts_at']).strftime('%H:%M'), mine={k: v for k, v in i18n.T['btn_my_bookings'].items()})
+        if c.execute("INSERT INTO job_runs VALUES ('staff_digest', %s) ON CONFLICT DO NOTHING RETURNING 1", (today,)).fetchone():
+            out['digests'] = enqueue(c, staff_chats(c), staff_summary(x, today - timedelta(days=1), title='Сводка за вчера'))
         c.execute("DELETE FROM telegram_updates WHERE received_at < now() - interval '7 days'")
     out.update(flush_outbox(db, tg, limit=200))
     return out
@@ -292,32 +317,24 @@ def set_state(c, chat_id, state, data=None):
               (state, json.dumps(data or {}), chat_id))
 
 
-BTN_SCAN = '📷 Сканировать QR'
-PUBLIC_URL = ''  # set by the app at startup
+def is_staff(user):
+    return user['role'] in ('admin', 'superadmin')
 
 
-def staff_menu():
-    rows = [[{'text': BTN_TODAY}, {'text': BTN_SCHEDULE}], [{'text': BTN_ENDING}, {'text': BTN_HELP}], [{'text': BTN_LOGOUT}]]
-    if PUBLIC_URL.startswith('https://'):
-        rows.insert(0, [{'text': BTN_SCAN, 'web_app': {'url': PUBLIC_URL + '/tg/scan'}}])
-    return {'keyboard': rows, 'resize_keyboard': True, 'is_persistent': True}
+def menu_for(user, lang='ru'):
+    return staff_menu() if is_staff(user) else client_menu(lang)
 
 
-def menu_for(user):
-    return staff_menu() if user['role'] in ('admin', 'superadmin') else CLIENT_MENU
+def help_text(user, lang):
+    if user and is_staff(user):
+        return HELP_STAFF
+    b = {k: i18n.T['btn_' + k][lang] for k in ('qr', 'book', 'subs', 'visits', 'services')}
+    return t(lang, 'help', mine=i18n.T['btn_my_bookings'][lang], **b)
 
 
-HELP_CLIENT = ('Это бот детского центра <b>Kinder Spa</b>.\n\n'
-               f'{BTN_QR} — покажите его на ресепшене, код действует 2 минуты.\n'
-               f'{BTN_BOOK} — выбрать услугу, день и время.\n'
-               f'{BTN_MY_BOOKINGS} — ваши записи и отмена.\n'
-               f'{BTN_SUBS} — остаток посещений и срок.\n'
-               f'{BTN_VISITS} — история посещений.\n'
-               f'{BTN_SERVICES} — массаж, гидромассаж, бассейн.\n\n'
-               'После каждого посещения сюда придёт уведомление, а за 3 дня до окончания абонемента — напоминание.')
 HELP_STAFF = ('Вы вошли как сотрудник Kinder Spa.\n\n'
               f'{BTN_SCAN} — наведите камеру на QR-код клиента и спишите посещение.\n'
-              f'{BTN_TODAY} — посещения и продажи за сегодня.\n'
+              f'{BTN_TODAY} — посещения, касса и продажи за сегодня.\n'
               f'{BTN_SCHEDULE} — занятия и записи на сегодня.\n'
               f'{BTN_ENDING} — абонементы, которые скоро закончатся.\n'
               'Каждое утро сюда приходит сводка за вчерашний день.')
@@ -339,11 +356,14 @@ def handle_update(db, tg, update, public_url=''):
             except TelegramError:
                 pass
             data = cq.get('data') or ''
-            if chat_id and data == 'qr':
-                _dispatch(c, tg, chat_id, BTN_QR, (cq.get('from') or {}).get('first_name', ''), None, public_url)
-            elif chat_id and data:
-                _booking_callback(c, tg, chat_id, msg.get('message_id'), data)
-            return
+            if not chat_id or not data:
+                return
+            first_name = (cq.get('from') or {}).get('first_name', '')
+            if data.startswith('lang:'):
+                return _set_lang(c, tg, chat_id, msg.get('message_id'), data[5:], first_name)
+            if data == 'qr':
+                return _dispatch(c, tg, chat_id, BTN_QR, first_name, None, public_url)
+            return _booking_callback(c, tg, chat_id, msg.get('message_id'), data)
         msg = update.get('message')
         if not msg or (msg.get('chat') or {}).get('type') != 'private':
             return
@@ -351,24 +371,46 @@ def handle_update(db, tg, update, public_url=''):
         _dispatch(c, tg, msg['chat']['id'], text, (msg.get('from') or {}).get('first_name', ''), msg.get('message_id'), public_url)
 
 
-def _dispatch(c, tg, chat_id, text, first_name, message_id, public_url):
+def _ensure_chat(c, chat_id, first_name):
     c.execute('''INSERT INTO telegram_chats(chat_id, first_name) VALUES (%s,%s)
         ON CONFLICT (chat_id) DO UPDATE SET first_name=EXCLUDED.first_name, updated_at=now()''', (chat_id, first_name[:100]))
-    chat = c.execute('SELECT * FROM telegram_chats WHERE chat_id=%s', (chat_id,)).fetchone()
+    return c.execute('SELECT * FROM telegram_chats WHERE chat_id=%s', (chat_id,)).fetchone()
+
+
+def _set_lang(c, tg, chat_id, message_id, lang, first_name):
+    lang = i18n.norm(lang)
+    chat = _ensure_chat(c, chat_id, first_name)
+    c.execute('UPDATE telegram_chats SET lang=%s, lang_chosen=true WHERE chat_id=%s', (lang, chat_id))
+    user = linked_user(c, chat)
+    _edit(tg, chat_id, message_id, t(lang, 'lang_set'))
+    if user:
+        tg.send(chat_id, help_text(user, lang), menu_for(user, lang))
+    else:
+        set_state(c, chat_id, 'await_login')
+        tg.send(chat_id, t(lang, 'welcome'), NO_MENU)
+
+
+def _dispatch(c, tg, chat_id, text, first_name, message_id, public_url):
+    chat = _ensure_chat(c, chat_id, first_name)
+    lang = chat['lang']
     user = linked_user(c, chat)
     if chat['user_id'] and not user:
         c.execute("UPDATE telegram_chats SET user_id=NULL, cred_version=NULL, state='idle' WHERE chat_id=%s", (chat_id,))
-        tg.send(chat_id, 'Доступ изменился (например, сброшен пароль). Войдите заново: /start', NO_MENU)
+        tg.send(chat_id, t(lang, 'access_changed'), NO_MENU)
         return
     command = text.split('@')[0].split()[0].lower() if text.startswith('/') else ''
+    button = i18n.button_key(text)
 
     if command == '/cancel':
         set_state(c, chat_id, 'idle')
-        tg.send(chat_id, 'Отменено.', menu_for(user) if user else NO_MENU)
+        tg.send(chat_id, t(lang, 'cancelled'), menu_for(user, lang) if user else NO_MENU)
         return
-    if command in ('/logout',) or text == BTN_LOGOUT:
+    if command == '/lang' or button == 'btn_lang':
+        tg.send(chat_id, t(lang, 'choose_lang'), LANG_KB)
+        return
+    if command == '/logout' or button == 'btn_logout' or text == BTN_LOGOUT:
         c.execute("UPDATE telegram_chats SET user_id=NULL, cred_version=NULL, state='idle' WHERE chat_id=%s", (chat_id,))
-        tg.send(chat_id, 'Вы вышли. Чтобы войти снова, отправьте /start', NO_MENU)
+        tg.send(chat_id, t(lang, 'logged_out'), NO_MENU)
         return
 
     if not user:
@@ -376,34 +418,35 @@ def _dispatch(c, tg, chat_id, text, first_name, message_id, public_url):
 
     if command == '/start':
         name = user['full_name'] or first_name
-        tg.send(chat_id, f'Здравствуйте, {e(name)}! 👋\n\n' + (HELP_STAFF if user['role'] != 'client' else HELP_CLIENT), menu_for(user))
+        greet = f'Здравствуйте, {e(name)}! 👋' if is_staff(user) else t(lang, 'hello', name=e(name))
+        tg.send(chat_id, greet + '\n\n' + help_text(user, lang), menu_for(user, lang))
         return
-    if command == '/help' or text == BTN_HELP:
-        tg.send(chat_id, HELP_STAFF if user['role'] != 'client' else HELP_CLIENT, menu_for(user))
+    if command == '/help' or button == 'btn_help' or text == BTN_HELP:
+        tg.send(chat_id, help_text(user, lang), menu_for(user, lang))
         return
-    if user['role'] == 'client':
-        return _client_action(c, tg, chat_id, user, text, command, public_url)
-    return _staff_action(c, tg, chat_id, user, text, command)
+    if is_staff(user):
+        return _staff_action(c, tg, chat_id, user, text, command)
+    return _client_action(c, tg, chat_id, user, button, command, public_url, lang)
 
 
 def _login_flow(c, tg, chat, text, command, message_id):
-    chat_id = chat['chat_id']
+    chat_id, lang = chat['chat_id'], chat['lang']
     if command in ('/start', '/login') or chat['state'] not in ('await_login', 'await_password'):
+        if not chat['lang_chosen']:  # offer the language once; login continues in the default language meanwhile
+            c.execute('UPDATE telegram_chats SET lang_chosen=true WHERE chat_id=%s', (chat_id,))
+            tg.send(chat_id, t(lang, 'choose_lang'), LANG_KB)
         set_state(c, chat_id, 'await_login')
-        tg.send(chat_id, 'Здравствуйте! Это бот детского центра <b>Kinder Spa</b> 🩵\n\n'
-                         'Чтобы войти, отправьте <b>логин</b>, который вам выдали на ресепшене.\n'
-                         'Отменить: /cancel', NO_MENU)
+        tg.send(chat_id, t(lang, 'welcome'), NO_MENU)
         return
     if chat['state'] == 'await_login':
         try:
             login = sec.normalize_login(text)
         except ValueError:
-            tg.send(chat_id, 'Логин состоит из латинских букв и цифр, например <code>kid12</code>. Попробуйте ещё раз.')
+            tg.send(chat_id, t(lang, 'bad_login'))
             return
         set_state(c, chat_id, 'await_password', {'login': login})
-        tg.send(chat_id, 'Теперь отправьте <b>пароль</b>. Сообщение с паролем я сразу удалю.')
+        tg.send(chat_id, t(lang, 'ask_password'))
         return
-    # await_password
     login = (chat['state_data'] or {}).get('login')
     if message_id:
         try:
@@ -417,7 +460,7 @@ def _login_flow(c, tg, chat, text, command, message_id):
                                                          (scopes, sec.THROTTLE_WINDOW_MIN)).fetchall()}
         if max(counts.values(), default=0) >= sec.THROTTLE_MAX:
             set_state(c, chat_id, 'idle')
-            tg.send(chat_id, 'Слишком много попыток. Подождите 15 минут и отправьте /start')
+            tg.send(chat_id, t(lang, 'too_many'))
             return
         user = c.execute('SELECT id, role, salt, verifier, cred_version, enabled, full_name FROM users WHERE login=%s',
                          (login,)).fetchone()
@@ -428,76 +471,86 @@ def _login_flow(c, tg, chat, text, command, message_id):
             for s in scopes:
                 c.execute('INSERT INTO login_attempts(scope) VALUES (%s)', (s,))
             set_state(c, chat_id, 'await_login')
-            tg.send(chat_id, 'Неверный логин или пароль. Отправьте логин ещё раз или /cancel')
+            tg.send(chat_id, t(lang, 'wrong_creds'))
             return
         if user['role'] == 'client' and not c.execute('SELECT 1 FROM clients WHERE user_id=%s AND NOT archived', (user['id'],)).fetchone():
             set_state(c, chat_id, 'idle')
-            tg.send(chat_id, 'Доступ отключён. Обратитесь на ресепшен.')
+            tg.send(chat_id, t(lang, 'access_disabled'))
             return
         c.execute('''UPDATE telegram_chats SET user_id=%s, cred_version=%s, state='idle', state_data='{}'::jsonb,
             linked_at=now(), updated_at=now() WHERE chat_id=%s''', (user['id'], user['cred_version'], chat_id))
         DbCtx(c, {'id': user['id']}).audit('telegram_link', 'user', user['id'], chat_id=chat_id)
-    staff = user['role'] != 'client'
-    tg.send(chat_id, f"Готово, {e(user['full_name'] or '')}! ✅\n\n" + (HELP_STAFF if staff else HELP_CLIENT),
-            staff_menu() if staff else CLIENT_MENU)
+    if is_staff(user):
+        tg.send(chat_id, f"Готово, {e(user['full_name'] or '')}! ✅\n\n" + HELP_STAFF, staff_menu())
+    else:
+        tg.send(chat_id, t(lang, 'logged_in', name=e(user['full_name'] or '')) + '\n\n' + help_text(user, lang), client_menu(lang))
 
 
-def _client_action(c, tg, chat_id, user, text, command, public_url):
+def _client_action(c, tg, chat_id, user, button, command, public_url, lang):
     from . import app as A
+    menu = client_menu(lang)
     client = c.execute('SELECT id, full_name FROM clients WHERE user_id=%s AND NOT archived', (user['id'],)).fetchone()
     if not client:
-        tg.send(chat_id, 'Доступ отключён. Обратитесь на ресепшен.', NO_MENU)
+        tg.send(chat_id, t(lang, 'access_disabled'), NO_MENU)
         return
     x = DbCtx(c, user)
-    if command == '/qr' or text == BTN_QR:
+    if command == '/qr' or button == 'btn_qr':
         token = sec.new_token()
         with c.transaction():
             c.execute('UPDATE qr_tokens SET expires_at=least(expires_at, now()) WHERE client_id=%s AND used_at IS NULL', (client['id'],))
             c.execute('INSERT INTO qr_tokens(token_hash, client_id, expires_at) VALUES (%s,%s,%s)',
                       (sec.token_hash(token), client['id'], A.now() + timedelta(seconds=sec.QR_SECONDS)))
-        tg.send_photo_bytes(chat_id, qr_png(A.QR_PREFIX + token),
-                            caption='Покажите этот QR-код на ресепшене.\nДействует <b>2 минуты</b> и только один раз.',
-                            reply_markup={'inline_keyboard': [[{'text': '🔄 Новый код', 'callback_data': 'qr'}]]})
+        tg.send_photo_bytes(chat_id, qr_png(A.QR_PREFIX + token), caption=t(lang, 'qr_caption'),
+                            reply_markup={'inline_keyboard': [[{'text': t(lang, 'btn_new_code'), 'callback_data': 'qr'}]]})
         return
-    if command == '/book' or text == BTN_BOOK:
-        return _book_start(c, tg, chat_id, None, x, client['id'])
-    if command == '/bookings' or text == BTN_MY_BOOKINGS:
-        return _my_bookings(c, tg, chat_id, x, client['id'])
-    if command == '/subs' or text == BTN_SUBS:
+    if command == '/book' or button == 'btn_book':
+        return _book_start(c, tg, chat_id, None, x, client['id'], lang)
+    if command == '/bookings' or button == 'btn_my_bookings':
+        return _my_bookings(c, tg, chat_id, x, client['id'], lang)
+    if command == '/subs' or button == 'btn_subs':
         subs = [s for s in A.subscriptions_for(x, 's.client_id=%s', (client['id'],), limit=20)
                 if s['state'] in ('active', 'frozen', 'not_started', 'used_up') or
                 (s['state'] == 'expired' and (A.today() - s['ends_on']).days <= 30)]
         if not subs:
-            tg.send(chat_id, 'Активных абонементов нет. Оформить можно на ресепшене.', CLIENT_MENU)
+            tg.send(chat_id, t(lang, 'no_subs'), menu)
             return
+        uz_names = {r['id']: r['name_uz'] for r in c.execute('SELECT id, name_uz FROM services').fetchall()}
         blocks = []
         for s in subs:
+            for i in s['items']:
+                i['name_uz'] = uz_names.get(i['service_id'])
             who = f" ({e(s['child_name'])})" if s['child_name'] else ''
-            extra = f"\nЗаморожен с {d(s['frozen_since'])}" if s['frozen_since'] else ''
-            debt = f"\n💳 К оплате: {A.fmt_sum(s['debt'])}" if s.get('debt') else ''
-            blocks.append(f"🎫 <b>{e(s['name'])}</b>{who}\n{items_text(s['items'])}\n"
-                          f"Действует до {d(s['ends_on'])} · {STATE_NAMES.get(s['state'], s['state'])}{extra}{debt}")
-        tg.send(chat_id, '\n\n'.join(blocks), CLIENT_MENU)
+            lines = [f"🎫 <b>{e(s['name'])}</b>{who}", items_text(s['items'], lang),
+                     t(lang, 'sub_valid', date=d(s['ends_on']), state=i18n.STATES[lang].get(s['state'], s['state']))]
+            if s['frozen_since']:
+                lines.append(t(lang, 'sub_frozen_since', date=d(s['frozen_since'])))
+            if s.get('debt'):
+                lines.append(t(lang, 'sub_debt', sum=i18n.money(s['debt'])))
+            blocks.append('\n'.join(lines))
+        tg.send(chat_id, '\n\n'.join(blocks), menu)
         return
-    if command == '/visits' or text == BTN_VISITS:
+    if command == '/visits' or button == 'btn_visits':
         rows = A.visits_query(x, 'sub.client_id=%s', (client['id'],), limit=10)
         if not rows:
-            tg.send(chat_id, 'Посещений пока нет.', CLIENT_MENU)
+            tg.send(chat_id, t(lang, 'no_visits'), menu)
             return
-        lines = ['🕘 <b>Последние посещения</b>']
+        uz_names = {r['id']: r['name_uz'] for r in c.execute('SELECT id, name_uz FROM services').fetchall()}
+        lines = [t(lang, 'visits_title')]
         for v in rows:
             at = v['visited_at'].astimezone(A.ZONE).strftime('%d.%m %H:%M')
             who = f" ({e(v['child_name'])})" if v['child_name'] else ''
-            line = f"{at} — {e(v['service_name'])}{who}"
-            lines.append(f'<s>{line}</s> отменено' if v['cancelled_at'] else line)
-        tg.send(chat_id, '\n'.join(lines), CLIENT_MENU)
+            svc = (uz_names.get(v['service_id']) if lang == 'uz' else None) or v['service_name']
+            line = f"{at} — {e(svc)}{who}"
+            lines.append(f"<s>{line}</s> {t(lang, 'visit_cancelled_mark')}" if v['cancelled_at'] else line)
+        tg.send(chat_id, '\n'.join(lines), menu)
         return
-    if command == '/services' or text == BTN_SERVICES:
-        services = A.services_list(x)
-        for s in services:
+    if command == '/services' or button == 'btn_services':
+        for s in A.services_list(x):
+            name = (s['name_uz'] if lang == 'uz' else '') or s['name_ru']
+            desc = (s['description_uz'] if lang == 'uz' else '') or s['description_ru']
             spec = ', '.join(p['full_name'] for p in s['specialists'])
-            caption = (f"<b>{e(s['name_ru'])}</b> · {s['duration_min']} мин\n{e(s['description_ru'])}"
-                       + (f"\nСпециалисты: {e(spec)}" if spec else ''))[:1000]
+            caption = (t(lang, 'service_card', name=e(name), min=s['duration_min'], desc=e(desc))
+                       + ('\n' + t(lang, 'specialists', names=e(spec)) if spec else ''))[:1000]
             if s['photos'] and public_url:
                 try:
                     tg.call('sendPhoto', chat_id=chat_id, photo=f"{public_url}/api/photos/{s['photos'][0]}",
@@ -506,9 +559,9 @@ def _client_action(c, tg, chat_id, user, text, command, public_url):
                 except TelegramError:
                     pass
             tg.send(chat_id, caption)
-        tg.send(chat_id, 'Записаться и оформить абонемент можно на ресепшене.', CLIENT_MENU)
+        tg.send(chat_id, t(lang, 'services_footer', book=t(lang, 'btn_book')), menu)
         return
-    tg.send(chat_id, 'Выберите действие в меню ниже 👇', CLIENT_MENU)
+    tg.send(chat_id, t(lang, 'choose_action'), menu)
 
 
 def _staff_action(c, tg, chat_id, user, text, command):
@@ -521,8 +574,8 @@ def _staff_action(c, tg, chat_id, user, text, command):
         tg.send(chat_id, _staff_slots(x, A.today()), staff_menu())
         return
     if command == '/ending' or text == BTN_ENDING:
-        t = A.today()
-        subs = A.subscriptions_for(x, "s.status='active' AND s.ends_on BETWEEN %s AND %s", (t, t + timedelta(days=7)), limit=30)
+        today = A.today()
+        subs = A.subscriptions_for(x, "s.status='active' AND s.ends_on BETWEEN %s AND %s", (today, today + timedelta(days=7)), limit=30)
         if not subs:
             tg.send(chat_id, 'В ближайшие 7 дней абонементы не заканчиваются.', staff_menu())
             return
@@ -531,16 +584,6 @@ def _staff_action(c, tg, chat_id, user, text, command):
         tg.send(chat_id, '\n'.join(lines), staff_menu())
         return
     tg.send(chat_id, 'Выберите действие в меню ниже 👇', staff_menu())
-
-
-BOOKING_ERRORS = {
-    'slot_full': 'На это время мест больше нет. Выберите другое.', 'slot_in_past': 'Это время уже прошло.',
-    'slot_cancelled': 'Занятие отменено.', 'slot_not_found': 'Занятие не найдено.',
-    'already_booked': 'Вы уже записаны на это время.', 'all_visits_reserved': 'Все посещения абонемента уже распределены по записям.',
-    'no_subscription_for_booking': 'Нет активного абонемента на эту услугу и дату.', 'choose_child': 'Выберите ребёнка.',
-    'booking_not_active': 'Эта запись уже не активна.', 'session_started': 'Занятие уже началось, отменить нельзя.',
-    'client_archived': 'Доступ отключён.', 'child_not_of_client': 'Ребёнок не найден.',
-}
 
 
 def _edit(tg, chat_id, message_id, text, markup=None):
@@ -571,45 +614,55 @@ def _staff_slots(x, t):
     return '\n'.join(lines)[:4000]
 
 
-def _book_start(c, tg, chat_id, message_id, x, client_id):
+def _svc_name(c, service_id, lang, fallback):
+    if lang != 'uz':
+        return fallback
+    row = c.execute('SELECT name_uz FROM services WHERE id=%s', (service_id,)).fetchone()
+    return (row and row['name_uz']) or fallback
+
+
+def _book_start(c, tg, chat_id, message_id, x, client_id, lang):
     from . import schedule as S
-    slots = S.available_slots(x, client_id)
     services = {}
-    for s in slots:
-        services.setdefault(s['service_id'], s['service_name'])
+    for s in S.available_slots(x, client_id):
+        services.setdefault(s['service_id'], _svc_name(c, s['service_id'], lang, s['service_name']))
     if not services:
-        _edit(tg, chat_id, message_id, 'Свободного времени по вашим абонементам пока нет. Уточните на ресепшене.')
+        _edit(tg, chat_id, message_id, t(lang, 'no_slots'))
         return
     kb = [[{'text': name, 'callback_data': f'bs:{sid}'}] for sid, name in services.items()]
-    _edit(tg, chat_id, message_id, '📅 <b>Запись</b>\nВыберите услугу:', {'inline_keyboard': kb})
+    _edit(tg, chat_id, message_id, t(lang, 'book_title'), {'inline_keyboard': kb})
 
 
-def _my_bookings(c, tg, chat_id, x, client_id):
+def _my_bookings(c, tg, chat_id, x, client_id, lang):
     from . import schedule as S
     rows = S.bookings_query(x, "b.client_id=%s AND b.status='booked' AND sl.starts_at > now()", (client_id,))
     if not rows:
-        tg.send(chat_id, 'Активных записей нет. Записаться: ' + BTN_BOOK, CLIENT_MENU)
+        tg.send(chat_id, t(lang, 'no_bookings', book=t(lang, 'btn_book')), client_menu(lang))
         return
     for b in rows[:10]:
         who = f" ({e(b['child_name'])})" if b['child_name'] else ''
-        spec = f"\nСпециалист: {e(b['specialist_name'])}" if b['specialist_name'] else ''
-        tg.send(chat_id, f"🗓 <b>{e(b['service_name'])}</b>{who}\n{S.when(b['starts_at'])}{spec}",
-                {'inline_keyboard': [[{'text': 'Отменить запись', 'callback_data': f"bc:{b['id']}"}]]})
+        spec = '\n' + t(lang, 'specialist', name=e(b['specialist_name'])) if b['specialist_name'] else ''
+        when = i18n.resolve(i18n.when(S.local(b['starts_at'])), lang)
+        tg.send(chat_id, f"🗓 <b>{e(_svc_name(c, b['service_id'], lang, b['service_name']))}</b>{who}\n{when}{spec}",
+                {'inline_keyboard': [[{'text': t(lang, 'btn_cancel_booking'), 'callback_data': f"bc:{b['id']}"}]]})
 
 
 def _booking_callback(c, tg, chat_id, message_id, data):
+    from datetime import datetime as _dt
     from . import app as A
     from . import schedule as S
     chat = c.execute('SELECT * FROM telegram_chats WHERE chat_id=%s', (chat_id,)).fetchone()
+    lang = chat['lang'] if chat else 'ru'
     user = linked_user(c, chat)
     if not user or user['role'] != 'client':
-        tg.send(chat_id, 'Войдите в бота: /start')
+        tg.send(chat_id, t(lang, 'login_first'))
         return
     client = c.execute('SELECT id FROM clients WHERE user_id=%s AND NOT archived', (user['id'],)).fetchone()
     if not client:
         return
     x = DbCtx(c, user)
     kind, _, rest = data.partition(':')
+    wd = i18n.WEEKDAYS[lang]
     try:
         if kind == 'bs':
             sid = int(rest)
@@ -617,44 +670,42 @@ def _booking_callback(c, tg, chat_id, message_id, data):
             for s in S.available_slots(x, client['id'], sid):
                 dd = S.local(s['starts_at']).date()
                 days[dd] = days.get(dd, 0) + 1
-            kb = [[{'text': f"{S.WEEKDAYS[dd.weekday()]} {dd.strftime('%d.%m')} · {n} врем.", 'callback_data': f"bd:{sid}:{dd.strftime('%Y%m%d')}"}]
-                  for dd, n in list(days.items())[:10]]
-            kb.append([{'text': '← Назад', 'callback_data': 'bb:'}])
-            _edit(tg, chat_id, message_id, 'Выберите день:', {'inline_keyboard': kb})
+            kb = [[{'text': t(lang, 'day_btn', wd=wd[dd.weekday()], date=dd.strftime('%d.%m'), n=n),
+                    'callback_data': f"bd:{sid}:{dd.strftime('%Y%m%d')}"}] for dd, n in list(days.items())[:10]]
+            kb.append([{'text': t(lang, 'btn_back'), 'callback_data': 'bb:'}])
+            _edit(tg, chat_id, message_id, t(lang, 'choose_day'), {'inline_keyboard': kb})
         elif kind == 'bb':
-            _book_start(c, tg, chat_id, message_id, x, client['id'])
+            _book_start(c, tg, chat_id, message_id, x, client['id'], lang)
         elif kind == 'bd':
             sid, ymd = rest.split(':')
-            from datetime import datetime as _dt
             target = _dt.strptime(ymd, '%Y%m%d').date()
             slots = [s for s in S.available_slots(x, client['id'], int(sid)) if S.local(s['starts_at']).date() == target]
-            kb = []
-            for s in slots[:20]:
-                spec = f" · {s['specialist_name']}" if s['specialist_name'] else ''
-                kb.append([{'text': f"{S.local(s['starts_at']).strftime('%H:%M')}{spec} · мест: {s['capacity'] - s['booked']}",
-                            'callback_data': f"bt:{s['id']}"}])
-            kb.append([{'text': '← Назад', 'callback_data': f'bs:{sid}'}])
-            _edit(tg, chat_id, message_id, f"Время на {d(target)}:", {'inline_keyboard': kb})
+            kb = [[{'text': t(lang, 'slot_btn', time=S.local(s['starts_at']).strftime('%H:%M'),
+                              spec=f" · {s['specialist_name']}" if s['specialist_name'] else '', n=s['capacity'] - s['booked']),
+                    'callback_data': f"bt:{s['id']}"}] for s in slots[:20]]
+            kb.append([{'text': t(lang, 'btn_back'), 'callback_data': f'bs:{sid}'}])
+            _edit(tg, chat_id, message_id, t(lang, 'times_title', date=d(target)), {'inline_keyboard': kb})
         elif kind in ('bt', 'bk'):
             parts = rest.split(':')
             slot_id = int(parts[0])
             child_id = int(parts[1]) if len(parts) > 1 else None
-            kids = c.execute('SELECT id, full_name FROM children WHERE client_id=%s AND NOT archived ORDER BY id', (client['id'],)).fetchall()
             try:
                 with c.transaction():
                     bid, sl = S.create_booking(x, slot_id, client['id'], child_id)
             except A.ApiError as err:
+                kids = c.execute('SELECT id, full_name FROM children WHERE client_id=%s AND NOT archived ORDER BY id', (client['id'],)).fetchall()
                 if err.code == 'choose_child' and kids:
                     kb = [[{'text': k['full_name'], 'callback_data': f"bk:{slot_id}:{k['id']}"}] for k in kids]
-                    _edit(tg, chat_id, message_id, 'Кого записываем?', {'inline_keyboard': kb})
+                    _edit(tg, chat_id, message_id, t(lang, 'who'), {'inline_keyboard': kb})
                     return
                 raise
             forfeit = c.execute('SELECT late_cancel_forfeit FROM services WHERE id=%s', (sl['service_id'],)).fetchone()['late_cancel_forfeit']
             cutoff = S.late_cutoff(sl['starts_at']).astimezone(A.ZONE)
-            note = f"\nБесплатная отмена до {cutoff.strftime('%H:%M %d.%m')}." if forfeit else ''
+            free = t(lang, 'free_cancel_until', time=cutoff.strftime('%H:%M %d.%m')) if forfeit else ''
             spec = f" · {e(sl['specialist_name'])}" if sl['specialist_name'] else ''
-            _edit(tg, chat_id, message_id, f"✅ Вы записаны: <b>{e(sl['service_name'])}</b>\n{S.when(sl['starts_at'])}{spec}{note}\n"
-                                           f"Накануне пришлю напоминание. Отменить: {BTN_MY_BOOKINGS}")
+            _edit(tg, chat_id, message_id, t(lang, 'booked', service=e(_svc_name(c, sl['service_id'], lang, sl['service_name'])),
+                                             when=i18n.when(S.local(sl['starts_at'])), spec=spec, free=free,
+                                             mine=t(lang, 'btn_my_bookings')))
         elif kind in ('bc', 'bcy'):
             bid = int(rest)
             if not c.execute('SELECT 1 FROM bookings WHERE id=%s AND client_id=%s', (bid, client['id'])).fetchone():
@@ -664,24 +715,24 @@ def _booking_callback(c, tg, chat_id, message_id, data):
                     res = S.cancel_booking(x, bid, by_staff=False, confirm_late=(kind == 'bcy'))
             except A.ApiError as err:
                 if err.code == 'late_cancel_confirm':
-                    _edit(tg, chat_id, message_id, '⚠️ Бесплатная отмена уже недоступна (после 19:00 накануне). '
-                                                   'Если отменить, посещение будет списано. Отменить всё равно?',
-                          {'inline_keyboard': [[{'text': 'Да, отменить', 'callback_data': f'bcy:{bid}'},
-                                                {'text': 'Нет, приду', 'callback_data': 'noop'}]]})
+                    _edit(tg, chat_id, message_id, t(lang, 'late_warn'),
+                          {'inline_keyboard': [[{'text': t(lang, 'btn_yes_cancel'), 'callback_data': f'bcy:{bid}'},
+                                                {'text': t(lang, 'btn_no_keep'), 'callback_data': 'noop'}]]})
                     return
                 raise
-            _edit(tg, chat_id, message_id, 'Запись отменена.' + (' Посещение списано по правилам центра.' if res['forfeited'] else ' Посещение не списано.'))
+            _edit(tg, chat_id, message_id, t(lang, 'booking_cancelled') + t(lang, 'forfeited' if res['forfeited'] else 'not_forfeited'))
         elif kind == 'noop':
-            _edit(tg, chat_id, message_id, 'Хорошо, запись сохранена. Ждём вас!')
+            _edit(tg, chat_id, message_id, t(lang, 'booking_kept'))
     except A.ApiError as err:
-        tg.send(chat_id, BOOKING_ERRORS.get(err.code, 'Не получилось. Попробуйте ещё раз или обратитесь на ресепшен.'))
+        key = 'err_' + err.code
+        tg.send(chat_id, t(lang, key) if key in i18n.T else t(lang, 'err_generic'))
     except (ValueError, IndexError):
         pass
 
 
 COMMANDS = [{'command': 'start', 'description': 'Начать / меню'}, {'command': 'qr', 'description': 'QR-код для ресепшена'},
             {'command': 'book', 'description': 'Записаться'}, {'command': 'bookings', 'description': 'Мои записи'},
-            {'command': 'subs', 'description': 'Мои абонементы'}, {'command': 'visits', 'description': 'История посещений'},
+            {'command': 'subs', 'description': 'Мои абонементы'}, {'command': 'lang', 'description': 'Язык / Til'}, {'command': 'visits', 'description': 'История посещений'},
             {'command': 'services', 'description': 'Услуги'}, {'command': 'logout', 'description': 'Выйти'}]
 
 

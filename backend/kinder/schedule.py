@@ -1,6 +1,7 @@
 """Schedule (slots) and bookings. Imported at the end of kinder.app to register routes."""
 from datetime import date, datetime, time, timedelta
 
+from . import i18n
 from . import telegram as tgbot
 from .app import (STAFF, ZONE, ApiError, api, boolean, day, found, ident, integer, lock_subscription, now,
                   reason, redeem, text, today)
@@ -16,6 +17,10 @@ def local(dt):
 def when(dt):
     v = local(dt)
     return f"{WEEKDAYS[v.weekday()]} {v.strftime('%d.%m')} в {v.strftime('%H:%M')}"
+
+
+def svc_name(row):
+    return i18n.name(tgbot.e(row['service_name']), tgbot.e(row.get('service_name_uz') or ''))
 
 
 def late_cutoff(starts_at):
@@ -34,7 +39,7 @@ def parse_hhmm(value, key='time'):
 
 # ------------------------------------------------------------------ queries
 
-SLOT_COLS = '''sl.id, sl.service_id, sv.name_ru AS service_name, sv.code AS service_code, sl.specialist_id,
+SLOT_COLS = '''sl.id, sl.service_id, sv.name_ru AS service_name, sv.name_uz AS service_name_uz, sv.code AS service_code, sl.specialist_id,
     sp.full_name AS specialist_name, sl.starts_at, sl.ends_at, sl.capacity, sl.note, sl.cancelled_at, sl.cancel_reason,
     (SELECT count(*) FROM bookings b WHERE b.slot_id = sl.id AND b.status IN ('booked','attended')) AS booked'''
 SLOT_FROM = 'slots sl JOIN services sv ON sv.id = sl.service_id LEFT JOIN specialists sp ON sp.id = sl.specialist_id'
@@ -43,7 +48,8 @@ SLOT_FROM = 'slots sl JOIN services sv ON sv.id = sl.service_id LEFT JOIN specia
 def bookings_query(x, where, args):
     return x.all(f'''SELECT b.id, b.slot_id, b.subscription_id, s.name AS subscription_name, b.client_id, c.full_name AS client_name,
             c.phone AS client_phone, b.child_id, ch.full_name AS child_name, b.status, b.created_at, b.cancelled_at,
-            b.cancel_reason, b.forfeited, b.visit_id, sl.starts_at, sl.ends_at, sv.name_ru AS service_name, sl.service_id,
+            b.cancel_reason, b.forfeited, b.visit_id, sl.starts_at, sl.ends_at, sv.name_ru AS service_name,
+            sv.name_uz AS service_name_uz, sl.service_id,
             sp.full_name AS specialist_name
         FROM bookings b JOIN slots sl ON sl.id = b.slot_id JOIN services sv ON sv.id = sl.service_id
         LEFT JOIN specialists sp ON sp.id = sl.specialist_id JOIN subscriptions s ON s.id = b.subscription_id
@@ -161,8 +167,8 @@ def slot_cancel(x):
         rows = x.all("""UPDATE bookings SET status='cancelled', cancelled_at=%s, cancelled_by=%s, cancel_reason=%s
             WHERE slot_id=%s AND status='booked' RETURNING client_id""", (now(), x.user['id'], 'Занятие отменено центром: ' + why, sid))
         for r in rows:
-            x.notify_client(r['client_id'], f"❗ Занятие <b>{tgbot.e(sl['service_name'])}</b> {when(sl['starts_at'])} отменено центром.\n"
-                            f"Причина: {tgbot.e(why)}. Посещение не списано — запишитесь на другое время.")
+            x.notify_client(r['client_id'], 'n_slot_cancel', service=svc_name(sl), when=i18n.when(local(sl['starts_at'])),
+                            reason=tgbot.e(why))
         x.audit('cancel_slot', 'slot', sid, reason=why, bookings_cancelled=len(rows))
     return {'ok': True, 'bookings_cancelled': len(rows)}
 
@@ -229,16 +235,16 @@ def create_booking(x, slot_id, client_id, child_id, subscription_id=None, by_sta
         VALUES (%s,%s,%s,%s,%s) RETURNING id''', (sl['id'], sid, client_id, child_id, x.user['id']))
     x.audit('book', 'subscription', sid, booking_id=row['id'], slot_id=sl['id'], starts_at=sl['starts_at'], child_id=child_id)
     if by_staff:
-        x.notify_client(client_id, f"📅 Вы записаны: <b>{tgbot.e(sl['service_name'])}</b> {when(sl['starts_at'])}"
-                        + (f" · {tgbot.e(sl['specialist_name'])}" if sl['specialist_name'] else '')
-                        + '\nОтменить запись можно в боте: «🗓 Мои записи».')
+        x.notify_client(client_id, 'n_staff_booked', service=svc_name(sl), when=i18n.when(local(sl['starts_at'])),
+                        spec=f" · {tgbot.e(sl['specialist_name'])}" if sl['specialist_name'] else '',
+                        mine=dict(i18n.T['btn_my_bookings']))
     return row['id'], sl
 
 
 def cancel_booking(x, booking_id, by_staff, why=None, confirm_late=False):
     b = found(x.one('SELECT subscription_id FROM bookings WHERE id=%s', (booking_id,)), 'booking_not_found')
     sub = lock_subscription(x, b['subscription_id'])
-    b = x.one('''SELECT b.*, sl.starts_at, sl.service_id, sv.name_ru AS service_name, sv.late_cancel_forfeit
+    b = x.one('''SELECT b.*, sl.starts_at, sl.service_id, sv.name_ru AS service_name, sv.name_uz AS service_name_uz, sv.late_cancel_forfeit
         FROM bookings b JOIN slots sl ON sl.id=b.slot_id JOIN services sv ON sv.id=sl.service_id WHERE b.id=%s FOR UPDATE OF b''', (booking_id,))
     if b['status'] != 'booked':
         raise ApiError(409, 'booking_not_active')
@@ -262,8 +268,8 @@ def cancel_booking(x, booking_id, by_staff, why=None, confirm_late=False):
         WHERE id=%s''', (now(), x.user['id'], why or ('Отменено клиентом' if not by_staff else 'Отменено центром'), forfeited, booking_id))
     x.audit('cancel_booking', 'subscription', sub['id'], booking_id=booking_id, by_staff=by_staff, forfeited=forfeited, reason=why)
     if by_staff:
-        x.notify_client(b['client_id'], f"❗ Запись <b>{tgbot.e(b['service_name'])}</b> {when(b['starts_at'])} отменена центром."
-                        + (f"\nПричина: {tgbot.e(why)}" if why else '') + '\nПосещение не списано.')
+        x.notify_client(b['client_id'], 'n_staff_cancel', service=svc_name(b), when=i18n.when(local(b['starts_at'])),
+                        reason=i18n.both('n_reason', reason=tgbot.e(why)) if why else '')
     return {'ok': True, 'forfeited': forfeited}
 
 
@@ -319,7 +325,7 @@ def booking_no_show(x):
     with x.c.transaction():
         b = found(x.one('SELECT subscription_id FROM bookings WHERE id=%s', (bid,)), 'booking_not_found')
         sub = lock_subscription(x, b['subscription_id'])
-        b = x.one('''SELECT b.*, sl.service_id, sl.starts_at, sv.late_cancel_forfeit, sv.name_ru AS service_name
+        b = x.one('''SELECT b.*, sl.service_id, sl.starts_at, sv.late_cancel_forfeit, sv.name_ru AS service_name, sv.name_uz AS service_name_uz
             FROM bookings b JOIN slots sl ON sl.id=b.slot_id JOIN services sv ON sv.id=sl.service_id WHERE b.id=%s FOR UPDATE OF b''', (bid,))
         if b['status'] != 'booked':
             raise ApiError(409, 'booking_not_active')
@@ -339,8 +345,7 @@ def booking_no_show(x):
         x.c.execute("UPDATE bookings SET status='no_show', forfeited=%s WHERE id=%s", (forfeited, bid))
         x.audit('no_show', 'subscription', sub['id'], booking_id=bid, forfeited=forfeited)
         if forfeited:
-            x.notify_client(b['client_id'], f"😔 Вы не пришли на занятие <b>{tgbot.e(b['service_name'])}</b> {when(b['starts_at'])}. "
-                            'По правилам центра посещение списано.')
+            x.notify_client(b['client_id'], 'n_no_show', service=svc_name(b), when=i18n.when(local(b['starts_at'])))
     return {'ok': True, 'forfeited': forfeited}
 
 

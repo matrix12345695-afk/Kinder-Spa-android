@@ -22,6 +22,7 @@ from starlette.staticfiles import StaticFiles
 
 from . import security as sec
 from . import telegram as tgbot
+from . import i18n
 from .db import Database, sqlstate
 
 log = logging.getLogger('kinder')
@@ -70,9 +71,9 @@ class Ctx:
         self.query = request.query_params
         self.notify = False
 
-    def notify_client(self, client_id, text):
-        """Queue a Telegram message to the parent's linked chats (inside the current transaction)."""
-        if getattr(self.request.app.state, 'tg', None) and tgbot.enqueue_for_client(self.c, client_id, text):
+    def notify_client(self, client_id, key, **params):
+        """Queue a Telegram message (i18n key) to the parent's linked chats inside the current transaction."""
+        if getattr(self.request.app.state, 'tg', None) and tgbot.enqueue_for_client(self.c, client_id, key, **params):
             self.notify = True
 
     def audit(self, action, entity, entity_id=None, **details):
@@ -817,9 +818,8 @@ def subscription_create(x):
         if paid_now:
             record_payment(x, row['id'], price, Decimal('0'), paid_now, x.body.get('paid_method') or 'cash', '')
         debt = max(Decimal('0'), price - (paid_now or Decimal('0')))
-        x.notify_client(cid, f"🎉 Оформлен абонемент <b>{tgbot.e(name)}</b>\n"
-                        f"Действует с {starts.strftime('%d.%m.%Y')} по {ends.strftime('%d.%m.%Y')}."
-                        + (f"\nК оплате: {fmt_sum(debt)}" if debt else ''))
+        x.notify_client(cid, 'n_sub_created', name=tgbot.e(name), start=starts.strftime('%d.%m.%Y'), end=ends.strftime('%d.%m.%Y'),
+                        debt=i18n.both('n_to_pay', sum=i18n.money(debt)) if debt else '')
     return {'id': row['id']}
 
 
@@ -848,7 +848,7 @@ def subscription_freeze(x):
             raise ApiError(409, 'expired')
         x.c.execute("UPDATE subscriptions SET status='frozen', frozen_since=%s WHERE id=%s", (today(), s['id']))
         x.audit('freeze', 'subscription', s['id'], reason=why)
-        x.notify_client(s['client_id'], f"❄️ Абонемент <b>{tgbot.e(s['name'])}</b> заморожен. Срок продлится на дни заморозки.")
+        x.notify_client(s['client_id'], 'n_freeze', name=tgbot.e(s['name']))
     return {'ok': True}
 
 
@@ -862,7 +862,7 @@ def subscription_unfreeze(x):
         ends = s['ends_on'] + timedelta(days=days)
         x.c.execute("UPDATE subscriptions SET status='active', frozen_since=NULL, ends_on=%s WHERE id=%s", (ends, s['id']))
         x.audit('unfreeze', 'subscription', s['id'], frozen_days=days, ends_on=ends)
-        x.notify_client(s['client_id'], f"▶️ Абонемент <b>{tgbot.e(s['name'])}</b> снова активен, действует до {ends.strftime('%d.%m.%Y')}.")
+        x.notify_client(s['client_id'], 'n_unfreeze', name=tgbot.e(s['name']), end=ends.strftime('%d.%m.%Y'))
     return {'ok': True, 'frozen_days': days, 'ends_on': ends}
 
 
@@ -877,7 +877,7 @@ def subscription_extend(x):
         ends = s['ends_on'] + timedelta(days=days)
         x.c.execute('UPDATE subscriptions SET ends_on=%s WHERE id=%s', (ends, s['id']))
         x.audit('extend', 'subscription', s['id'], days=days, ends_on=ends, reason=why)
-        x.notify_client(s['client_id'], f"📅 Абонемент <b>{tgbot.e(s['name'])}</b> продлён до {ends.strftime('%d.%m.%Y')}.")
+        x.notify_client(s['client_id'], 'n_extend', name=tgbot.e(s['name']), end=ends.strftime('%d.%m.%Y'))
     return {'ok': True, 'ends_on': ends}
 
 
@@ -951,8 +951,8 @@ def payment_create(x):
         paid = x.one('SELECT coalesce(sum(amount),0) AS v FROM payments WHERE subscription_id=%s AND voided_at IS NULL', (s['id'],))['v']
         pid = record_payment(x, s['id'], s['price'], paid, amount, method, note)
         debt = s['price'] - paid - amount
-        x.notify_client(s['client_id'], f"💳 Оплата получена: <b>{fmt_sum(amount)}</b> ({PAYMENT_METHODS[method]}) — {tgbot.e(s['name'])}\n"
-                        + (f"Остаток к оплате: {fmt_sum(debt)}" if debt > 0 else 'Абонемент оплачен полностью. Спасибо!'))
+        x.notify_client(s['client_id'], 'n_payment', sum=i18n.money(amount), method={l: i18n.METHODS[l][method] for l in i18n.LANGS},
+                        name=tgbot.e(s['name']), rest=i18n.both('n_payment_rest', debt=i18n.money(debt)) if debt > 0 else i18n.both('n_payment_full'))
     return {'id': pid, 'debt': debt}
 
 
@@ -1058,14 +1058,14 @@ def redeem(x, sub, service_id, child_id, specialist_id, method, force=False, boo
         booking_id = schedule.link_visit_to_booking(x, sub, service_id, child_id, visit['id'])
     x.audit('visit', 'subscription', sub['id'], visit_id=visit['id'], service_id=service_id, child_id=child_id,
             specialist_id=specialist_id, method=method, remaining=item['remaining'] - 1, booking_id=booking_id)
-    names = x.one('''SELECT sv.name_ru AS service, si.quota, ch.full_name AS child FROM subscription_items si
+    names = x.one('''SELECT sv.name_ru AS service, sv.name_uz AS service_uz, si.quota, ch.full_name AS child FROM subscription_items si
         JOIN services sv ON sv.id=si.service_id LEFT JOIN children ch ON ch.id=%s
         WHERE si.subscription_id=%s AND si.service_id=%s''', (child_id, sub['id'], service_id))
     left = item['remaining'] - 1
     who = f" ({tgbot.e(names['child'])})" if names['child'] else ''
-    tail = '\n⚠️ Это было последнее посещение по этой услуге.' if left == 0 else ('\nОсталось одно посещение.' if left == 1 else '')
-    x.notify_client(sub['client_id'], f"✅ Посещение отмечено: <b>{tgbot.e(names['service'])}</b>{who}\n"
-                    f"Осталось: <b>{left}</b> из {names['quota']} · абонемент до {sub['ends_on'].strftime('%d.%m.%Y')}{tail}")
+    tail = i18n.both('n_visit_last') if left == 0 else (i18n.both('n_visit_one') if left == 1 else '')
+    x.notify_client(sub['client_id'], 'n_visit', service=i18n.name(tgbot.e(names['service']), tgbot.e(names['service_uz'] or '')),
+                    who=who, left=left, quota=names['quota'], ends=sub['ends_on'].strftime('%d.%m.%Y'), tail=tail)
     return {'visit_id': visit['id'], 'remaining': item['remaining'] - 1}
 
 
@@ -1109,9 +1109,9 @@ def visit_cancel(x):
         x.c.execute('''UPDATE subscription_items SET remaining=remaining+1, quota=greatest(quota, remaining+1)
             WHERE subscription_id=%s AND service_id=%s''', (sub['id'], v['service_id']))
         x.audit('cancel_visit', 'subscription', sub['id'], visit_id=vid, service_id=v['service_id'], reason=why)
-        svc = x.one('SELECT name_ru FROM services WHERE id=%s', (v['service_id'],))['name_ru']
-        x.notify_client(sub['client_id'], f"↩️ Посещение «{tgbot.e(svc)}» от {v['visited_at'].astimezone(ZONE).strftime('%d.%m %H:%M')} "
-                        'отменено, оно возвращено на абонемент.')
+        svc = x.one('SELECT name_ru, name_uz FROM services WHERE id=%s', (v['service_id'],))
+        x.notify_client(sub['client_id'], 'n_visit_cancel', service=i18n.name(tgbot.e(svc['name_ru']), tgbot.e(svc['name_uz'] or '')),
+                        at=v['visited_at'].astimezone(ZONE).strftime('%d.%m %H:%M'))
     return {'ok': True}
 
 
