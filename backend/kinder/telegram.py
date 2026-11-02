@@ -23,8 +23,10 @@ log = logging.getLogger('kinder.telegram')
 
 BTN_QR, BTN_SUBS, BTN_VISITS, BTN_SERVICES, BTN_HELP, BTN_LOGOUT = (
     '📱 QR-код', '🎫 Мои абонементы', '🕘 Посещения', '💆 Услуги', '❓ Помощь', '🚪 Выйти')
-BTN_TODAY, BTN_ENDING = '📊 Сегодня', '⏳ Заканчиваются'
-CLIENT_MENU = {'keyboard': [[{'text': BTN_QR}], [{'text': BTN_SUBS}, {'text': BTN_VISITS}],
+BTN_TODAY, BTN_ENDING, BTN_SCHEDULE = '📊 Сегодня', '⏳ Заканчиваются', '🗓 Расписание'
+BTN_BOOK, BTN_MY_BOOKINGS = '📅 Записаться', '🗓 Мои записи'
+CLIENT_MENU = {'keyboard': [[{'text': BTN_QR}], [{'text': BTN_BOOK}, {'text': BTN_MY_BOOKINGS}],
+                            [{'text': BTN_SUBS}, {'text': BTN_VISITS}],
                             [{'text': BTN_SERVICES}, {'text': BTN_HELP}], [{'text': BTN_LOGOUT}]],
                'resize_keyboard': True, 'is_persistent': True}
 STAFF_MENU = {'keyboard': [[{'text': BTN_TODAY}, {'text': BTN_ENDING}], [{'text': BTN_HELP}, {'text': BTN_LOGOUT}]],
@@ -137,6 +139,9 @@ class DbCtx:
     def all(self, sql, args=()):
         return self.c.execute(sql, args).fetchall()
 
+    def notify_client(self, client_id, text):
+        enqueue_for_client(self.c, client_id, text)
+
     def audit(self, action, entity, entity_id=None, **details):
         self.c.execute('INSERT INTO audit_log(actor_id, action, entity, entity_id, details) VALUES (%s,%s,%s,%s,%s::jsonb)',
                        (self.user['id'] if self.user else None, action, entity, entity_id,
@@ -233,6 +238,15 @@ def daily(db, tg):
                 out['reminders'] += enqueue_for_client(c, s['client_id'],
                     f"⌛ Срок абонемента <b>{e(s['name'])}</b> истёк, неиспользованных посещений: {left}.\n"
                     'Если нужно продлить, обратитесь на ресепшен.')
+        from . import schedule as S
+        for b in S.bookings_query(x, "b.status='booked' AND (sl.starts_at AT TIME ZONE 'Asia/Tashkent')::date = %s",
+                                  (t + timedelta(days=1),)):
+            if c.execute("INSERT INTO reminders_sent VALUES (%s,%s,%s) ON CONFLICT DO NOTHING RETURNING 1",
+                         (b['subscription_id'], f"booking:{b['id']}", t)).fetchone():
+                who = f" ({e(b['child_name'])})" if b['child_name'] else ''
+                out['reminders'] += enqueue_for_client(c, b['client_id'],
+                    f"🔔 Напоминаем: завтра <b>{e(b['service_name'])}</b>{who} в {S.local(b['starts_at']).strftime('%H:%M')}.\n"
+                    f"Если не получается, отмените запись до 19:00 сегодня: {BTN_MY_BOOKINGS}")
         if c.execute("INSERT INTO job_runs VALUES ('staff_digest', %s) ON CONFLICT DO NOTHING RETURNING 1", (t,)).fetchone():
             out['digests'] = enqueue(c, staff_chats(c), staff_summary(x, t - timedelta(days=1), title='Сводка за вчера'))
         c.execute("DELETE FROM telegram_updates WHERE received_at < now() - interval '7 days'")
@@ -283,7 +297,7 @@ PUBLIC_URL = ''  # set by the app at startup
 
 
 def staff_menu():
-    rows = [[{'text': BTN_TODAY}, {'text': BTN_ENDING}], [{'text': BTN_HELP}, {'text': BTN_LOGOUT}]]
+    rows = [[{'text': BTN_TODAY}, {'text': BTN_SCHEDULE}], [{'text': BTN_ENDING}, {'text': BTN_HELP}], [{'text': BTN_LOGOUT}]]
     if PUBLIC_URL.startswith('https://'):
         rows.insert(0, [{'text': BTN_SCAN, 'web_app': {'url': PUBLIC_URL + '/tg/scan'}}])
     return {'keyboard': rows, 'resize_keyboard': True, 'is_persistent': True}
@@ -295,6 +309,8 @@ def menu_for(user):
 
 HELP_CLIENT = ('Это бот детского центра <b>Kinder Spa</b>.\n\n'
                f'{BTN_QR} — покажите его на ресепшене, код действует 2 минуты.\n'
+               f'{BTN_BOOK} — выбрать услугу, день и время.\n'
+               f'{BTN_MY_BOOKINGS} — ваши записи и отмена.\n'
                f'{BTN_SUBS} — остаток посещений и срок.\n'
                f'{BTN_VISITS} — история посещений.\n'
                f'{BTN_SERVICES} — массаж, гидромассаж, бассейн.\n\n'
@@ -302,6 +318,7 @@ HELP_CLIENT = ('Это бот детского центра <b>Kinder Spa</b>.\n
 HELP_STAFF = ('Вы вошли как сотрудник Kinder Spa.\n\n'
               f'{BTN_SCAN} — наведите камеру на QR-код клиента и спишите посещение.\n'
               f'{BTN_TODAY} — посещения и продажи за сегодня.\n'
+              f'{BTN_SCHEDULE} — занятия и записи на сегодня.\n'
               f'{BTN_ENDING} — абонементы, которые скоро закончатся.\n'
               'Каждое утро сюда приходит сводка за вчерашний день.')
 
@@ -321,8 +338,11 @@ def handle_update(db, tg, update, public_url=''):
                 tg.call('answerCallbackQuery', callback_query_id=cq.get('id'))
             except TelegramError:
                 pass
-            if chat_id and cq.get('data') == 'qr':
+            data = cq.get('data') or ''
+            if chat_id and data == 'qr':
                 _dispatch(c, tg, chat_id, BTN_QR, (cq.get('from') or {}).get('first_name', ''), None, public_url)
+            elif chat_id and data:
+                _booking_callback(c, tg, chat_id, msg.get('message_id'), data)
             return
         msg = update.get('message')
         if not msg or (msg.get('chat') or {}).get('type') != 'private':
@@ -439,6 +459,10 @@ def _client_action(c, tg, chat_id, user, text, command, public_url):
                             caption='Покажите этот QR-код на ресепшене.\nДействует <b>2 минуты</b> и только один раз.',
                             reply_markup={'inline_keyboard': [[{'text': '🔄 Новый код', 'callback_data': 'qr'}]]})
         return
+    if command == '/book' or text == BTN_BOOK:
+        return _book_start(c, tg, chat_id, None, x, client['id'])
+    if command == '/bookings' or text == BTN_MY_BOOKINGS:
+        return _my_bookings(c, tg, chat_id, x, client['id'])
     if command == '/subs' or text == BTN_SUBS:
         subs = [s for s in A.subscriptions_for(x, 's.client_id=%s', (client['id'],), limit=20)
                 if s['state'] in ('active', 'frozen', 'not_started', 'used_up') or
@@ -493,6 +517,9 @@ def _staff_action(c, tg, chat_id, user, text, command):
     if command == '/today' or text == BTN_TODAY:
         tg.send(chat_id, staff_summary(x, A.today()), staff_menu())
         return
+    if command == '/schedule' or text == BTN_SCHEDULE:
+        tg.send(chat_id, _staff_slots(x, A.today()), staff_menu())
+        return
     if command == '/ending' or text == BTN_ENDING:
         t = A.today()
         subs = A.subscriptions_for(x, "s.status='active' AND s.ends_on BETWEEN %s AND %s", (t, t + timedelta(days=7)), limit=30)
@@ -506,7 +533,154 @@ def _staff_action(c, tg, chat_id, user, text, command):
     tg.send(chat_id, 'Выберите действие в меню ниже 👇', staff_menu())
 
 
+BOOKING_ERRORS = {
+    'slot_full': 'На это время мест больше нет. Выберите другое.', 'slot_in_past': 'Это время уже прошло.',
+    'slot_cancelled': 'Занятие отменено.', 'slot_not_found': 'Занятие не найдено.',
+    'already_booked': 'Вы уже записаны на это время.', 'all_visits_reserved': 'Все посещения абонемента уже распределены по записям.',
+    'no_subscription_for_booking': 'Нет активного абонемента на эту услугу и дату.', 'choose_child': 'Выберите ребёнка.',
+    'booking_not_active': 'Эта запись уже не активна.', 'session_started': 'Занятие уже началось, отменить нельзя.',
+    'client_archived': 'Доступ отключён.', 'child_not_of_client': 'Ребёнок не найден.',
+}
+
+
+def _edit(tg, chat_id, message_id, text, markup=None):
+    if message_id:
+        try:
+            tg.call('editMessageText', chat_id=chat_id, message_id=message_id, text=text, parse_mode='HTML', reply_markup=markup)
+            return
+        except TelegramError:
+            pass
+    tg.send(chat_id, text, markup)
+
+
+def _staff_slots(x, t):
+    from . import schedule as S
+    slots = x.all(f'''SELECT {S.SLOT_COLS} FROM {S.SLOT_FROM}
+        WHERE sl.cancelled_at IS NULL AND (sl.starts_at AT TIME ZONE 'Asia/Tashkent')::date = %s ORDER BY sl.starts_at''', (t,))
+    if not slots:
+        return 'На сегодня занятий в расписании нет.'
+    books = S.bookings_query(x, "b.slot_id = ANY(%s) AND b.status IN ('booked','attended','no_show')", ([s['id'] for s in slots],))
+    marks = {'booked': '⏳', 'attended': '✅', 'no_show': '❌'}
+    lines = [f'🗓 <b>Расписание на {d(t)}</b>']
+    for s in slots:
+        spec = f" · {e(s['specialist_name'])}" if s['specialist_name'] else ''
+        lines.append(f"\n<b>{S.local(s['starts_at']).strftime('%H:%M')} {e(s['service_name'])}</b>{spec} — {s['booked']}/{s['capacity']}")
+        for b in [b for b in books if b['slot_id'] == s['id']]:
+            who = e(b['client_name']) + (f" ({e(b['child_name'])})" if b['child_name'] else '')
+            lines.append(f"{marks[b['status']]} {who}")
+    return '\n'.join(lines)[:4000]
+
+
+def _book_start(c, tg, chat_id, message_id, x, client_id):
+    from . import schedule as S
+    slots = S.available_slots(x, client_id)
+    services = {}
+    for s in slots:
+        services.setdefault(s['service_id'], s['service_name'])
+    if not services:
+        _edit(tg, chat_id, message_id, 'Свободного времени по вашим абонементам пока нет. Уточните на ресепшене.')
+        return
+    kb = [[{'text': name, 'callback_data': f'bs:{sid}'}] for sid, name in services.items()]
+    _edit(tg, chat_id, message_id, '📅 <b>Запись</b>\nВыберите услугу:', {'inline_keyboard': kb})
+
+
+def _my_bookings(c, tg, chat_id, x, client_id):
+    from . import schedule as S
+    rows = S.bookings_query(x, "b.client_id=%s AND b.status='booked' AND sl.starts_at > now()", (client_id,))
+    if not rows:
+        tg.send(chat_id, 'Активных записей нет. Записаться: ' + BTN_BOOK, CLIENT_MENU)
+        return
+    for b in rows[:10]:
+        who = f" ({e(b['child_name'])})" if b['child_name'] else ''
+        spec = f"\nСпециалист: {e(b['specialist_name'])}" if b['specialist_name'] else ''
+        tg.send(chat_id, f"🗓 <b>{e(b['service_name'])}</b>{who}\n{S.when(b['starts_at'])}{spec}",
+                {'inline_keyboard': [[{'text': 'Отменить запись', 'callback_data': f"bc:{b['id']}"}]]})
+
+
+def _booking_callback(c, tg, chat_id, message_id, data):
+    from . import app as A
+    from . import schedule as S
+    chat = c.execute('SELECT * FROM telegram_chats WHERE chat_id=%s', (chat_id,)).fetchone()
+    user = linked_user(c, chat)
+    if not user or user['role'] != 'client':
+        tg.send(chat_id, 'Войдите в бота: /start')
+        return
+    client = c.execute('SELECT id FROM clients WHERE user_id=%s AND NOT archived', (user['id'],)).fetchone()
+    if not client:
+        return
+    x = DbCtx(c, user)
+    kind, _, rest = data.partition(':')
+    try:
+        if kind == 'bs':
+            sid = int(rest)
+            days = {}
+            for s in S.available_slots(x, client['id'], sid):
+                dd = S.local(s['starts_at']).date()
+                days[dd] = days.get(dd, 0) + 1
+            kb = [[{'text': f"{S.WEEKDAYS[dd.weekday()]} {dd.strftime('%d.%m')} · {n} врем.", 'callback_data': f"bd:{sid}:{dd.strftime('%Y%m%d')}"}]
+                  for dd, n in list(days.items())[:10]]
+            kb.append([{'text': '← Назад', 'callback_data': 'bb:'}])
+            _edit(tg, chat_id, message_id, 'Выберите день:', {'inline_keyboard': kb})
+        elif kind == 'bb':
+            _book_start(c, tg, chat_id, message_id, x, client['id'])
+        elif kind == 'bd':
+            sid, ymd = rest.split(':')
+            from datetime import datetime as _dt
+            target = _dt.strptime(ymd, '%Y%m%d').date()
+            slots = [s for s in S.available_slots(x, client['id'], int(sid)) if S.local(s['starts_at']).date() == target]
+            kb = []
+            for s in slots[:20]:
+                spec = f" · {s['specialist_name']}" if s['specialist_name'] else ''
+                kb.append([{'text': f"{S.local(s['starts_at']).strftime('%H:%M')}{spec} · мест: {s['capacity'] - s['booked']}",
+                            'callback_data': f"bt:{s['id']}"}])
+            kb.append([{'text': '← Назад', 'callback_data': f'bs:{sid}'}])
+            _edit(tg, chat_id, message_id, f"Время на {d(target)}:", {'inline_keyboard': kb})
+        elif kind in ('bt', 'bk'):
+            parts = rest.split(':')
+            slot_id = int(parts[0])
+            child_id = int(parts[1]) if len(parts) > 1 else None
+            kids = c.execute('SELECT id, full_name FROM children WHERE client_id=%s AND NOT archived ORDER BY id', (client['id'],)).fetchall()
+            try:
+                with c.transaction():
+                    bid, sl = S.create_booking(x, slot_id, client['id'], child_id)
+            except A.ApiError as err:
+                if err.code == 'choose_child' and kids:
+                    kb = [[{'text': k['full_name'], 'callback_data': f"bk:{slot_id}:{k['id']}"}] for k in kids]
+                    _edit(tg, chat_id, message_id, 'Кого записываем?', {'inline_keyboard': kb})
+                    return
+                raise
+            forfeit = c.execute('SELECT late_cancel_forfeit FROM services WHERE id=%s', (sl['service_id'],)).fetchone()['late_cancel_forfeit']
+            cutoff = S.late_cutoff(sl['starts_at']).astimezone(A.ZONE)
+            note = f"\nБесплатная отмена до {cutoff.strftime('%H:%M %d.%m')}." if forfeit else ''
+            spec = f" · {e(sl['specialist_name'])}" if sl['specialist_name'] else ''
+            _edit(tg, chat_id, message_id, f"✅ Вы записаны: <b>{e(sl['service_name'])}</b>\n{S.when(sl['starts_at'])}{spec}{note}\n"
+                                           f"Накануне пришлю напоминание. Отменить: {BTN_MY_BOOKINGS}")
+        elif kind in ('bc', 'bcy'):
+            bid = int(rest)
+            if not c.execute('SELECT 1 FROM bookings WHERE id=%s AND client_id=%s', (bid, client['id'])).fetchone():
+                return
+            try:
+                with c.transaction():
+                    res = S.cancel_booking(x, bid, by_staff=False, confirm_late=(kind == 'bcy'))
+            except A.ApiError as err:
+                if err.code == 'late_cancel_confirm':
+                    _edit(tg, chat_id, message_id, '⚠️ Бесплатная отмена уже недоступна (после 19:00 накануне). '
+                                                   'Если отменить, посещение будет списано. Отменить всё равно?',
+                          {'inline_keyboard': [[{'text': 'Да, отменить', 'callback_data': f'bcy:{bid}'},
+                                                {'text': 'Нет, приду', 'callback_data': 'noop'}]]})
+                    return
+                raise
+            _edit(tg, chat_id, message_id, 'Запись отменена.' + (' Посещение списано по правилам центра.' if res['forfeited'] else ' Посещение не списано.'))
+        elif kind == 'noop':
+            _edit(tg, chat_id, message_id, 'Хорошо, запись сохранена. Ждём вас!')
+    except A.ApiError as err:
+        tg.send(chat_id, BOOKING_ERRORS.get(err.code, 'Не получилось. Попробуйте ещё раз или обратитесь на ресепшен.'))
+    except (ValueError, IndexError):
+        pass
+
+
 COMMANDS = [{'command': 'start', 'description': 'Начать / меню'}, {'command': 'qr', 'description': 'QR-код для ресепшена'},
+            {'command': 'book', 'description': 'Записаться'}, {'command': 'bookings', 'description': 'Мои записи'},
             {'command': 'subs', 'description': 'Мои абонементы'}, {'command': 'visits', 'description': 'История посещений'},
             {'command': 'services', 'description': 'Услуги'}, {'command': 'logout', 'description': 'Выйти'}]
 

@@ -20,6 +20,12 @@ const ERRORS = {
   invalid_image: 'Файл не похож на изображение', image_too_large: 'Фото больше 2 МБ', too_many_photos: 'Не больше 10 фото',
   overpayment: 'Сумма больше долга по абонементу', already_voided: 'Оплата уже отменена',
   void_needs_superadmin: 'Отменить можно только свою оплату за сегодня; остальные — главный администратор',
+  slot_full: 'Мест на это время больше нет', slot_in_past: 'Это время уже прошло', slot_cancelled: 'Занятие отменено',
+  slot_exists: 'Такое занятие уже есть в расписании', already_booked: 'Уже записан на это время',
+  all_visits_reserved: 'Все посещения абонемента уже распределены по записям', no_subscription_for_booking: 'Нет активного абонемента на эту услугу и дату',
+  choose_child: 'Выберите ребёнка', booking_not_active: 'Запись уже не активна', booking_not_today: 'Отметить приход можно только в день занятия',
+  session_not_started: 'Занятие ещё не началось', capacity_below_bookings: 'Записано больше людей, чем новое число мест',
+  subscription_not_usable: 'Этот абонемент нельзя использовать для записи',
   cannot_disable_self: 'Нельзя отключить самого себя', wrong_current_password: 'Текущий пароль неверный',
   password_length: 'Пароль должен быть от 8 символов', invalid_period: 'Некорректный период', busy_retry: 'База занята, повторите',
   internal_error: 'Ошибка сервера', network: 'Нет связи с сервером', specialist_not_found: 'Специалист не найден',
@@ -34,6 +40,8 @@ const ACTIONS = {
   reset_password: 'Сброс пароля', change_password: 'Смена пароля', create_service: 'Новая услуга', update_service: 'Изменение услуги',
   add_photo: 'Добавлено фото', delete_photo: 'Удалено фото', create_specialist: 'Новый специалист', update_specialist: 'Изменение специалиста',
   payment: 'Оплата', void_payment: 'Отмена оплаты', telegram_link: 'Вход в Telegram-бот',
+  create_slot: 'Новое занятие', generate_slots: 'Создано расписание', update_slot: 'Изменение занятия', cancel_slot: 'Отмена занятия',
+  book: 'Запись', cancel_booking: 'Отмена записи', no_show: 'Неявка',
   create_plan: 'Новый тариф', update_plan: 'Изменение тарифа', bootstrap_superadmin: 'Создан главный администратор',
 };
 
@@ -167,7 +175,7 @@ function renderLogin() {
 }
 
 const PAGES = [
-  ['today', 'Сегодня'], ['scan', 'Сканер QR'], ['clients', 'Клиенты'], ['subscriptions', 'Абонементы'], ['visits', 'Посещения'], ['cash', 'Касса'],
+  ['today', 'Сегодня'], ['scan', 'Сканер QR'], ['clients', 'Клиенты'], ['subscriptions', 'Абонементы'], ['schedule', 'Расписание'], ['visits', 'Посещения'], ['cash', 'Касса'],
   ['services', 'Услуги'], ['specialists', 'Специалисты'], ['plans', 'Тарифы'], ['reports', 'Отчёты'],
   ['staff', 'Сотрудники', 'superadmin'], ['audit', 'Журнал'],
 ];
@@ -203,7 +211,7 @@ function go(page, arg) {
   const main = $('#main');
   main.append(h('div', { class: 'muted' }, 'Загрузка…'));
   const render = { today: pageToday, scan: pageScan, clients: pageClients, client: pageClient, subscriptions: pageSubscriptions,
-    visits: pageVisits, cash: pageCash, services: pageServices, specialists: pageSpecialists, plans: pagePlans, reports: pageReports, staff: pageStaff, audit: pageAudit }[page] || pageToday;
+    visits: pageVisits, cash: pageCash, schedule: pageSchedule, services: pageServices, specialists: pageSpecialists, plans: pagePlans, reports: pageReports, staff: pageStaff, audit: pageAudit }[page] || pageToday;
   Promise.resolve(render(main, arg)).catch((e) => { main.replaceChildren(h('div', { class: 'card' }, errText(e))); });
 }
 async function start() {
@@ -279,6 +287,7 @@ async function pageClient(main, id) {
   const [c, { plans, services, specialists }] = await Promise.all([api('GET', '/clients/' + id), refs()]);
   const reload = () => go('client', id);
   const activeKids = c.children.filter((k) => !k.archived);
+  const bookingsBox = h('div', { class: 'muted' }, 'Загрузка…');
   main.replaceChildren(
     h('div', { class: 'row between' }, h('div', {}, h('button', { class: 'btn small', onclick: () => go('clients') }, '← Клиенты'),
       h('h1', {}, c.full_name, ' ', c.archived ? h('span', { class: 'badge bad' }, 'архив') : null)),
@@ -301,7 +310,9 @@ async function pageClient(main, id) {
           : h('div', { class: 'stack' }, h('div', { class: 'muted' }, 'Логин ещё не выдан'), h('button', { class: 'btn', onclick: () => issueLogin(c, reload), disabled: c.archived }, 'Выдать логин и пароль')))),
     h('div', { class: 'card' }, h('h2', {}, 'Абонементы'),
       c.subscriptions.length ? c.subscriptions.map((s) => subCard(s, activeKids, specialists, reload)) : h('div', { class: 'empty' }, 'Абонементов нет')),
+    h('div', { class: 'card' }, h('h2', {}, 'Записи'), bookingsBox),
     h('div', { class: 'card' }, h('h2', {}, 'Посещения'), visitsTable(c.visits, { onChange: reload, hideClient: true })));
+  api('GET', `/clients/${c.id}/bookings`).then((rows) => bookingsBox.replaceChildren(bookingsTable(rows, reload, true))).catch(() => {});
 }
 function age(birth) {
   const b = new Date(birth + 'T00:00:00'); const n = new Date();
@@ -513,7 +524,8 @@ function visitsTable(rows, { compact, onChange, hideClient } = {}) {
   return h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Время'), hideClient ? null : h('th', {}, 'Клиент'), h('th', {}, 'Услуга'),
     compact ? null : h('th', {}, 'Специалист'), compact ? null : h('th', {}, 'Отметил'), h('th', {}, ''))),
   h('tbody', {}, rows.map((v) => h('tr', { class: v.cancelled_at ? 'cancelled' : '' },
-    h('td', { class: 'small' }, fmtDateTime(v.visited_at), v.method === 'qr' ? h('span', { class: 'badge' }, ' QR') : null),
+    h('td', { class: 'small' }, fmtDateTime(v.visited_at), v.method === 'qr' ? h('span', { class: 'badge' }, ' QR') : null,
+      v.method === 'late_cancel' ? h('span', { class: 'badge bad' }, 'поздняя отмена') : null, v.method === 'no_show' ? h('span', { class: 'badge bad' }, 'неявка') : null),
     hideClient ? null : h('td', {}, h('a', { href: '#client/' + v.client_id, onclick: (e) => { e.preventDefault(); go('client', v.client_id); } }, v.client_name), v.child_name ? h('div', { class: 'small muted' }, v.child_name) : null),
     h('td', {}, v.service_name, compact ? null : h('div', { class: 'small muted' }, v.subscription_name)),
     compact ? null : h('td', { class: 'small' }, v.specialist_name || '—'), compact ? null : h('td', { class: 'small' }, v.staff_name),
@@ -639,7 +651,8 @@ function editService(s, done) {
     field('Описание (UZ)', h('textarea', { name: 'description_uz' }, s ? s.description_uz : '')),
     h('div', { class: 'row' }, field('Длительность, мин *', h('input', { name: 'duration_min', type: 'number', min: 5, max: 240, value: s ? s.duration_min : 30, required: true })),
       field('Порядок', h('input', { name: 'sort', type: 'number', value: s ? s.sort : 0 }))),
-    h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'active', checked: s ? s.active : true }), 'Показывать клиентам')),
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'active', checked: s ? s.active : true }), 'Показывать клиентам'),
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'late_cancel_forfeit', checked: s ? s.late_cancel_forfeit : false }), 'Поздняя отмена (после 19:00 накануне) и неявка списывают посещение')),
   { onOk: async (f) => {
     const d = readForm(f); d.duration_min = Number(d.duration_min); d.sort = Number(d.sort || 0);
     if (s) await api('PATCH', '/services/' + s.id, d); else await api('POST', '/services', d);
@@ -694,6 +707,117 @@ function editPlan(p, services, done) {
     d.items = [...f.querySelectorAll('[data-plan-svc]')].filter((x) => x.value).map((x) => ({ service_id: Number(x.dataset.planSvc), visits: Number(x.value) }));
     if (p) await api('PATCH', '/plans/' + p.id, d); else await api('POST', '/plans', d);
     toast('Сохранено'); done();
+  } });
+}
+
+/* ------------------------------------------------------------- schedule */
+const BSTATES = { booked: 'записан', attended: 'пришёл', no_show: 'неявка', cancelled: 'отменено' };
+const WD = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+const fmtTime = (s) => new Date(s).toLocaleTimeString('ru-RU', { timeZone: 'Asia/Tashkent', hour: '2-digit', minute: '2-digit' });
+function shiftDate(iso, days) { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); }
+function bookingsTable(rows, onChange, showSlot) {
+  if (!rows.length) return h('div', { class: 'empty' }, 'Записей нет');
+  const now = Date.now();
+  const isToday = (b) => new Date(b.starts_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' }) === todayISO();
+  return h('div', { class: 'table-wrap' }, h('table', {}, h('tbody', {}, rows.map((b) => h('tr', { class: b.status === 'cancelled' ? 'cancelled' : '' },
+    showSlot ? h('td', { class: 'small' }, fmtDateTime(b.starts_at), h('div', { class: 'muted' }, b.service_name)) : null,
+    showSlot ? null : h('td', {}, h('a', { href: '#client/' + b.client_id, onclick: (e) => { e.preventDefault(); go('client', b.client_id); } }, b.client_name),
+      b.client_phone ? h('div', { class: 'small muted' }, b.client_phone) : null),
+    h('td', {}, b.child_name || '—'),
+    h('td', {}, h('span', { class: 'badge ' + (b.status === 'attended' ? 'active' : b.status === 'booked' ? '' : 'bad') }, BSTATES[b.status]), b.forfeited ? h('div', { class: 'small muted' }, 'посещение списано') : null),
+    h('td', { class: 'row' }, b.status !== 'booked' ? null : [
+      isToday(b) ? h('button', { class: 'btn small primary', onclick: () => guard(async () => { const r = await api('POST', `/bookings/${b.id}/attend`); toast(`Приход отмечен, осталось ${r.remaining}`); onChange(); }) }, 'Пришёл') : null,
+      new Date(b.starts_at).getTime() <= now ? h('button', { class: 'btn small', onclick: () => guard(async () => { const r = await api('POST', `/bookings/${b.id}/no-show`); toast(r.forfeited ? 'Неявка, посещение списано' : 'Неявка отмечена'); onChange(); }) }, 'Неявка') : null,
+      h('button', { class: 'btn small danger', onclick: () => askReason('Отменить запись', h('p', { class: 'muted' }, 'Отмена центром: посещение не списывается, клиенту придёт уведомление.'),
+        async (d) => { await api('POST', `/bookings/${b.id}/cancel`, d); toast('Запись отменена'); onChange(); }) }, 'Отменить')]))))));
+}
+async function pageSchedule(main) {
+  const { services, specialists } = await refs();
+  const date = h('input', { type: 'date', value: state.cache.schDate || todayISO() });
+  const svc = h('select', {}, h('option', { value: '' }, 'Все услуги'), services.map((s) => h('option', { value: s.id }, s.name_ru)));
+  const week = h('div', { class: 'row' });
+  const box = h('div', {});
+  const load = async () => {
+    state.cache.schDate = date.value;
+    const monday = shiftDate(date.value, -((new Date(date.value + 'T12:00:00Z').getUTCDay() + 6) % 7));
+    week.replaceChildren(...Array.from({ length: 7 }, (_, i) => { const d = shiftDate(monday, i);
+      return h('button', { class: 'btn small' + (d === date.value ? ' primary' : ''), onclick: () => { date.value = d; guard(load); } }, `${WD[i]} ${d.slice(8, 10)}.${d.slice(5, 7)}`); }));
+    const slots = await api('GET', `/slots?from=${date.value}&to=${date.value}${svc.value ? '&service_id=' + svc.value : ''}`);
+    box.replaceChildren(...(slots.length ? slots.map((s) => h('div', { class: 'card stack' },
+      h('div', { class: 'row between' }, h('div', {}, h('b', {}, fmtTime(s.starts_at), '–', fmtTime(s.ends_at), ' ', s.service_name), s.specialist_name ? h('span', { class: 'muted' }, ' · ', s.specialist_name) : null,
+        ' ', h('span', { class: 'badge' + (s.booked >= s.capacity ? ' bad' : '') }, `${s.booked}/${s.capacity}`), s.note ? h('div', { class: 'small muted' }, s.note) : null),
+      h('div', { class: 'row' }, h('button', { class: 'btn small primary', disabled: s.booked >= s.capacity, onclick: () => bookClient(s, load) }, 'Записать клиента'),
+        h('button', { class: 'btn small', onclick: () => editSlot(s, load) }, 'Мест'),
+        h('button', { class: 'btn small danger', onclick: () => askReason('Отменить занятие', h('p', { class: 'muted' }, `Записанные (${s.booked}) получат уведомление, посещения не списываются.`),
+          async (d) => { const r = await api('POST', `/slots/${s.id}/cancel`, d); toast(`Занятие отменено, записей: ${r.bookings_cancelled}`); load(); }) }, 'Отменить'))),
+      bookingsTable(s.bookings, load, false))) : [h('div', { class: 'card empty' }, 'На этот день занятий нет. Нажмите «Создать расписание».')]));
+  };
+  date.addEventListener('change', () => guard(load)); svc.addEventListener('change', () => guard(load));
+  main.replaceChildren(h('div', { class: 'row between' }, h('h1', {}, 'Расписание'),
+    h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => newSlot(services, specialists, load) }, '+ Занятие'),
+      h('button', { class: 'btn primary', onclick: () => generateSlots(services, specialists, load) }, 'Создать расписание'))),
+  h('div', { class: 'card stack' }, h('div', { class: 'row' }, h('button', { class: 'btn small', onclick: () => { date.value = shiftDate(date.value, -7); guard(load); } }, '←'), week,
+    h('button', { class: 'btn small', onclick: () => { date.value = shiftDate(date.value, 7); guard(load); } }, '→')), h('div', { class: 'row' }, field('День', date), field('Услуга', svc))), box);
+  await load();
+}
+function specSelect(specialists, serviceSel) {
+  const sel = h('select', { name: 'specialist_id' });
+  const fill = () => sel.replaceChildren(h('option', { value: '' }, '— без специалиста —'), ...specialists.filter((p) => p.active && p.service_ids.includes(Number(serviceSel.value))).map((p) => h('option', { value: p.id }, p.full_name)));
+  serviceSel.addEventListener('change', fill); fill();
+  return sel;
+}
+function newSlot(services, specialists, done) {
+  const svc = h('select', { name: 'service_id' }, services.filter((s) => s.active).map((s) => h('option', { value: s.id }, s.name_ru)));
+  modal('Новое занятие', h('div', { class: 'stack' }, field('Услуга', svc), field('Специалист', specSelect(specialists, svc)),
+    h('div', { class: 'row' }, field('Дата', h('input', { name: 'date', type: 'date', value: state.cache.schDate || todayISO(), required: true })), field('Время', h('input', { name: 'time', type: 'time', value: '10:00', required: true }))),
+    h('div', { class: 'row' }, field('Мест', h('input', { name: 'capacity', type: 'number', min: 1, max: 100, value: 1 })), field('Длительность, мин (пусто — как у услуги)', h('input', { name: 'duration_min', type: 'number', min: 5, max: 240 }))),
+    field('Заметка', h('input', { name: 'note', maxlength: 300 }))),
+  { okText: 'Создать', onOk: async (f) => { const d = readForm(f);
+    await api('POST', '/slots', { service_id: Number(d.service_id), specialist_id: d.specialist_id ? Number(d.specialist_id) : null, date: d.date, time: d.time,
+      capacity: Number(d.capacity || 1), duration_min: d.duration_min ? Number(d.duration_min) : null, note: d.note }); toast('Занятие создано'); done(); } });
+}
+function generateSlots(services, specialists, done) {
+  const svc = h('select', { name: 'service_id' }, services.filter((s) => s.active).map((s) => h('option', { value: s.id }, s.name_ru)));
+  modal('Создать расписание', h('div', { class: 'stack' }, field('Услуга', svc), field('Специалист', specSelect(specialists, svc)),
+    h('div', { class: 'row' }, field('С', h('input', { name: 'from', type: 'date', value: todayISO(), required: true })), field('По', h('input', { name: 'to', type: 'date', value: todayISO(27), required: true }))),
+    h('div', {}, h('div', { class: 'muted small' }, 'Дни недели'), h('div', { class: 'row' }, WD.map((w, i) => h('label', { class: 'check' }, h('input', { type: 'checkbox', 'data-wd': i, checked: i < 6 }), w)))),
+    field('Время начала (через запятую)', h('input', { name: 'times', value: '09:00, 10:00, 11:00, 12:00, 14:00, 15:00, 16:00, 17:00, 18:00', required: true })),
+    h('div', { class: 'row' }, field('Мест на занятие', h('input', { name: 'capacity', type: 'number', min: 1, max: 100, value: 1 })), field('Длительность, мин (пусто — как у услуги)', h('input', { name: 'duration_min', type: 'number', min: 5, max: 240 }))),
+    h('p', { class: 'small muted' }, 'Уже существующие занятия не дублируются. Прошедшее время пропускается.')),
+  { okText: 'Создать', onOk: async (f) => { const d = readForm(f);
+    const r = await api('POST', '/slots/generate', { service_id: Number(d.service_id), specialist_id: d.specialist_id ? Number(d.specialist_id) : null, from: d.from, to: d.to,
+      weekdays: [...f.querySelectorAll('[data-wd]')].filter((x) => x.checked).map((x) => Number(x.dataset.wd)),
+      times: d.times.split(/[,\s]+/).filter(Boolean), capacity: Number(d.capacity || 1), duration_min: d.duration_min ? Number(d.duration_min) : null });
+    toast(`Создано занятий: ${r.created}` + (r.skipped ? `, уже были: ${r.skipped}` : '')); done(); } });
+}
+function editSlot(s, done) {
+  modal('Занятие ' + fmtTime(s.starts_at), h('div', { class: 'stack' }, field('Мест', h('input', { name: 'capacity', type: 'number', min: 1, max: 100, value: s.capacity })),
+    field('Заметка', h('input', { name: 'note', value: s.note, maxlength: 300 }))),
+  { onOk: async (f) => { const d = readForm(f); await api('PATCH', `/slots/${s.id}`, { capacity: Number(d.capacity), note: d.note }); toast('Сохранено'); done(); } });
+}
+function bookClient(slot, done) {
+  const q = h('input', { type: 'search', placeholder: 'Имя, телефон или имя ребёнка' });
+  const list = h('div', { class: 'stack' });
+  const kidBox = h('div', {});
+  let chosen = null; let timer;
+  const pick = async (c) => {
+    chosen = await api('GET', '/clients/' + c.id);
+    const kids = chosen.children.filter((k) => !k.archived);
+    list.replaceChildren(h('div', {}, 'Клиент: ', h('b', {}, chosen.full_name)));
+    kidBox.replaceChildren(kids.length > 1 ? field('Ребёнок', h('select', { name: 'child_id' }, kids.map((k) => h('option', { value: k.id }, k.full_name)))) : '');
+  };
+  q.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(async () => {
+    if (q.value.trim().length < 2) return list.replaceChildren();
+    const rows = await api('GET', '/clients?q=' + encodeURIComponent(q.value));
+    list.replaceChildren(...rows.slice(0, 8).map((c) => h('button', { type: 'button', class: 'btn', onclick: () => pick(c) }, c.full_name, c.children ? ` (${c.children})` : '', c.active_subscriptions ? '' : ' — нет абонемента')));
+  }, 250); });
+  modal(`Записать: ${slot.service_name}, ${fmtTime(slot.starts_at)}`, h('div', { class: 'stack' }, q, list, kidBox,
+    h('p', { class: 'small muted' }, 'Подходящий абонемент выбирается автоматически. Клиенту придёт уведомление в Telegram.')),
+  { okText: 'Записать', onOk: async (f) => {
+    if (!chosen) throw { code: 'client_not_found' };
+    const d = readForm(f);
+    await api('POST', '/bookings', { slot_id: slot.id, client_id: chosen.id, child_id: d.child_id ? Number(d.child_id) : null });
+    toast('Записан'); done();
   } });
 }
 

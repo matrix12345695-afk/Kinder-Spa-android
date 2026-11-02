@@ -229,3 +229,48 @@ def test_daily_reminders_and_digest(owner, chat, anon, server, fake_telegram, cl
     with urllib.request.urlopen(urllib.request.Request(req.full_url, data=b'{}', method='POST')) as r:  # morning window, no secret
         second = json.loads(r.read())
     assert second['reminders'] == 0 and second['digests'] == 0
+
+
+def test_bot_booking_flow(owner, chat, fake_telegram, clock, server):
+    clock(datetime(2027, 1, 11, 9, 0, tzinfo=TZ))   # Monday
+    cid, sid, cred = parent(owner, 'Бот Запись', plan='Бассейн — 8 занятий')
+    owner.post(f'/api/subscriptions/{sid}/extend', {'days': 90, 'reason': 'тест'}, expect=200)
+    pool = pool_id(owner)
+    _, slot = owner.post('/api/slots', {'service_id': pool, 'date': '2027-01-12', 'time': '10:00', 'capacity': 3}, expect=200)
+    chat.login(cred['login'], cred['password'])
+
+    chat.send('📅 Записаться')
+    kb = chat.last()['reply_markup']['inline_keyboard']
+    assert kb[0][0]['callback_data'] == f'bs:{pool}'
+    chat.press(f'bs:{pool}')
+    day_btn = fake_telegram.take('editMessageText', chat.id)[-1]['reply_markup']['inline_keyboard'][0][0]
+    assert day_btn['callback_data'] == f'bd:{pool}:20270112'
+    chat.press(day_btn['callback_data'])
+    time_btn = fake_telegram.take('editMessageText', chat.id)[-1]['reply_markup']['inline_keyboard'][0][0]
+    assert time_btn['text'].startswith('10:00') and time_btn['callback_data'] == f"bt:{slot['id']}"
+    chat.press(time_btn['callback_data'])
+    done = fake_telegram.take('editMessageText', chat.id)[-1]['text']
+    assert 'Вы записаны' in done and 'Бесплатная отмена до 19:00 11.01' in done
+
+    # staff sees it in today's/tomorrow's schedule via API
+    slots = owner.get('/api/slots?from=2027-01-12&to=2027-01-12')[1]
+    assert slots[0]['bookings'][0]['client_name'] == 'Бот Запись'
+
+    # reminder the day before
+    clock(datetime(2027, 1, 11, 8, 30, tzinfo=TZ))
+    import json
+    import urllib.request
+    urllib.request.urlopen(urllib.request.Request(server + '/api/cron/daily', data=b'{}', method='POST')).read()
+    fake_telegram.wait('sendMessage', chat.id, 'Напоминаем: завтра')
+
+    # late cancellation asks for confirmation
+    clock(datetime(2027, 1, 11, 20, 0, tzinfo=TZ))
+    chat.send('🗓 Мои записи')
+    cancel_btn = chat.last()['reply_markup']['inline_keyboard'][0][0]['callback_data']
+    chat.press(cancel_btn)
+    warn = fake_telegram.take('editMessageText', chat.id)[-1]
+    assert 'посещение будет списано' in warn['text']
+    chat.press('noop')
+    assert 'запись сохранена' in fake_telegram.take('editMessageText', chat.id)[-1]['text']
+    chat.press(warn['reply_markup']['inline_keyboard'][0][0]['callback_data'])
+    assert 'Посещение списано' in fake_telegram.take('editMessageText', chat.id)[-1]['text']

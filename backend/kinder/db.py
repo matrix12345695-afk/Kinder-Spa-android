@@ -9,7 +9,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 HERE = Path(__file__).parent
-MIGRATIONS = [HERE / 'schema.sql', HERE / 'schema_002_telegram.sql', HERE / 'schema_003_payments.sql']  # append new files, never edit applied ones
+MIGRATIONS = [HERE / 'schema.sql', HERE / 'schema_002_telegram.sql', HERE / 'schema_003_payments.sql',
+              HERE / 'schema_004_schedule.sql']  # append new files, never edit applied ones
 
 
 def psycopg_connect(url):

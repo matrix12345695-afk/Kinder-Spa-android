@@ -197,3 +197,44 @@ def test_payments_ui(page, server, owner):
     pg.click('button:has-text("С долгом")')
     pg.wait_for_selector('td:has-text("Касса Браузер")')
     assert not pg.errors, pg.errors
+
+
+def test_schedule_ui(page, server, owner):
+    from datetime import datetime, timedelta, timezone
+    tomorrow = (datetime.now(timezone(timedelta(hours=5))) + timedelta(days=1)).date().isoformat()
+    _, r = owner.post('/api/clients', {'full_name': 'Расписание Браузер', 'children': [{'full_name': 'Лола'}]}, expect=200)
+    _, plans = owner.get('/api/plans')
+    owner.post('/api/subscriptions', {'client_id': r['id'], 'plan_id': next(p['id'] for p in plans if p['name'] == 'Бассейн — 12 занятий')}, expect=200)
+    pg = page
+    pg.goto(server + '/admin/')
+    pg.fill('input[name=login]', 'owner')
+    pg.fill('input[name=password]', 'owner-pass-123')
+    pg.click('button[type=submit]')
+    pg.wait_for_selector('h1:has-text("Сегодня")')
+    pg.click('nav >> text=Расписание')
+    pg.wait_for_selector('h1:has-text("Расписание")')
+    pg.click('text=Создать расписание')
+    pg.select_option('.modal select[name=service_id]', label='Бассейн')
+    pg.fill('.modal input[name=from]', tomorrow)
+    pg.fill('.modal input[name=to]', tomorrow)
+    for i in range(7):
+        pg.locator(f'.modal [data-wd="{i}"]').check()
+    pg.fill('.modal input[name=times]', '10:00, 11:00')
+    pg.fill('.modal input[name=capacity]', '4')
+    pg.click('.modal button[type=submit]')
+    pg.wait_for_selector('text=Создано занятий: 2')
+    pg.fill('main input[type=date]', tomorrow)
+    pg.dispatch_event('main input[type=date]', 'change')
+    pg.wait_for_selector('.card:has-text("10:00") >> text=0/4')
+    pg.locator('.card:has-text("10:00") button:has-text("Записать клиента")').first.click()
+    pg.fill('.modal input[type=search]', 'Расписание Брау')
+    pg.click('.modal button:has-text("Расписание Браузер")')
+    pg.wait_for_selector('.modal >> text=Клиент:')
+    pg.click('.modal button[type=submit]')
+    pg.wait_for_selector('td:has-text("Расписание Браузер")')
+    pg.wait_for_selector('text=1/4')
+    shot(pg, '11-schedule')
+    pg.goto(server + f"/admin/#client/{r['id']}")
+    pg.wait_for_selector('h2:has-text("Записи")')
+    pg.wait_for_selector('.badge:has-text("записан")')
+    assert not pg.errors, pg.errors

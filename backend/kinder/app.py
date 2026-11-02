@@ -543,6 +543,8 @@ def service_fields(body, partial):
         fields['sort'] = integer(body.get('sort'), 'sort', lo=-1000, hi=1000)
     if 'active' in body:
         fields['active'] = boolean(body, 'active')
+    if 'late_cancel_forfeit' in body:
+        fields['late_cancel_forfeit'] = boolean(body, 'late_cancel_forfeit')
     return fields
 
 
@@ -1009,7 +1011,7 @@ def visits_query(x, where, args, limit=500, include_cancelled=True):
         WHERE {cond} ORDER BY v.visited_at DESC, v.id DESC LIMIT {int(limit)}''', args)
 
 
-def redeem(x, sub, service_id, child_id, specialist_id, method, force=False):
+def redeem(x, sub, service_id, child_id, specialist_id, method, force=False, booking_id=None):
     """Caller holds the subscription row lock inside a transaction."""
     t = today()
     if sub['status'] == 'frozen':
@@ -1040,6 +1042,7 @@ def redeem(x, sub, service_id, child_id, specialist_id, method, force=False):
         raise ApiError(409, 'no_visits_left')
     if not force:
         dup = x.one('''SELECT v.id FROM visits v WHERE v.subscription_id=%s AND v.service_id=%s AND v.cancelled_at IS NULL
+            AND v.method IN ('qr','manual')
             AND v.child_id IS NOT DISTINCT FROM %s AND (v.visited_at AT TIME ZONE 'Asia/Tashkent')::date = %s''',
                     (sub['id'], service_id, child_id, t))
         if dup:
@@ -1048,8 +1051,13 @@ def redeem(x, sub, service_id, child_id, specialist_id, method, force=False):
                 (sub['id'], service_id))
     visit = x.one('''INSERT INTO visits(subscription_id, service_id, child_id, specialist_id, method, visited_at, staff_id)
         VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id''', (sub['id'], service_id, child_id, specialist_id, method, now(), x.user['id']))
+    from . import schedule
+    if booking_id:
+        x.c.execute("UPDATE bookings SET status='attended', visit_id=%s WHERE id=%s", (visit['id'], booking_id))
+    else:
+        booking_id = schedule.link_visit_to_booking(x, sub, service_id, child_id, visit['id'])
     x.audit('visit', 'subscription', sub['id'], visit_id=visit['id'], service_id=service_id, child_id=child_id,
-            specialist_id=specialist_id, method=method, remaining=item['remaining'] - 1)
+            specialist_id=specialist_id, method=method, remaining=item['remaining'] - 1, booking_id=booking_id)
     names = x.one('''SELECT sv.name_ru AS service, si.quota, ch.full_name AS child FROM subscription_items si
         JOIN services sv ON sv.id=si.service_id LEFT JOIN children ch ON ch.id=%s
         WHERE si.subscription_id=%s AND si.service_id=%s''', (child_id, sub['id'], service_id))
@@ -1401,3 +1409,6 @@ def create_app(database_url=None, connect=None, migrate=True, telegram_api=None)
 def asgi():
     logging.basicConfig(level=logging.INFO)
     return create_app()
+
+
+from . import schedule  # noqa: E402,F401  (registers schedule routes)
