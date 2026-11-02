@@ -1,21 +1,27 @@
-# Kinder Spa API blueprint. Existing paid PostgreSQL is managed separately.
-# This blueprint does not create another database.
+# Kinder Spa on Render: API + admin panel, connected to the existing kinder-spa-db.
+# Apply once from the Render dashboard: New → Blueprint → this repository (branch main).
+# The blueprint does NOT create a database; it links the existing one by name.
 services:
   - type: web
-    name: kinder-spa-api
-    runtime: docker
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: ./backend
+    name: kinder-spa
+    runtime: python
+    region: frankfurt
     plan: free
+    branch: main
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn kinder.app:asgi --factory --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
     healthCheckPath: /health
+    autoDeployTrigger: commit
     envVars:
+      - key: PYTHON_VERSION
+        value: '3.12.12'
       - key: DATABASE_URL
         fromDatabase:
           name: kinder-spa-db
           property: connectionString
-      - key: JWT_SECRET
-        generateValue: true
-      - key: ADMIN_USERNAME
-        value: admin
+      # First superadmin, created only if none exists. Remove both after the first login.
+      - key: ADMIN_LOGIN
+        sync: false
       - key: ADMIN_PASSWORD
         sync: false

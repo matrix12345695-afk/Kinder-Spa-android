@@ -1,28 +1,84 @@
 # Kinder Spa 🩵
 
-Kinder Spa is a children's wellness center app and administration system.
+Система учёта для детского оздоровительного центра: **детский массаж**, **гидромассаж**, **бассейн**.
 
-## Services (approved scope)
-1. **Детский массаж** — children's massage
-2. **Гидромассаж** — hydromassage
-3. **Бассейн** — swimming pool
+Сейчас работает **этап 1**: API + веб-панель администратора на одной базе PostgreSQL (Render).
 
-Each service has its own description, photos, specialists/instructors where applicable, session duration and optional subscription packages.
+## Что умеет панель
 
-## Product architecture
-- **Android client app**: username/password issued by admin (no self-registration), available subscriptions, remaining visits, QR code, visit history, service catalog.
-- **Private admin web panel**: client and child profiles, service catalog, specialists, photo management, subscription creation/extension/freezing, QR scanning and redemption, audit logs and reports.
-- **API and database**: backend on Render, dedicated PostgreSQL `kinder-spa-db`.
+| Раздел | Возможности |
+|---|---|
+| Сегодня | посещения за день, активные/замороженные абонементы, заканчивающиеся абонементы |
+| Сканер QR | USB-сканер или камера (Chrome на Android); поиск клиента по QR и списание посещения |
+| Клиенты | родители и дети, поиск по имени, имени ребёнка, телефону; заметки; архив |
+| Абонементы | по тарифу или индивидуальный (несколько услуг); на ребёнка или на всю семью; заморозка (срок сдвигается автоматически), продление, корректировка с причиной, закрытие, история |
+| Посещения | ручная отметка или QR; защита от двойного списания за день; отмена с возвратом посещения |
+| Услуги | описание RU/UZ, длительность, фото (до 10 на услугу), скрытие |
+| Специалисты | кто ведёт какие услуги; телефон виден только сотрудникам |
+| Тарифы | состав, срок действия, цена; изменения не затрагивают проданные абонементы |
+| Отчёты | посещения по услугам, специалистам, дням; продажи и выручка по тарифам |
+| Сотрудники | роли «главный администратор» и «администратор», сброс пароля, отключение |
+| Журнал | неизменяемый журнал всех действий (запрещено править на уровне БД) |
 
-## Subscription accounting
-- An individual subscription can be limited to a single service category.
-- Combined subscriptions can specify allowed categories and per-category visit allowances; do not assume all visits are interchangeable.
-- Each QR redemption must record the service category, client, subscription, staff/admin, timestamp, and remaining balances.
-- QR tokens must be short-lived and single-use with transactional redemption and anti-replay protection.
-- Admin may adjust balances with recorded justification.
+Доступ родителей в приложение: администратор выдаёт логин и пароль (самостоятельной регистрации нет).
 
-## Security
-No real customer data, secrets, photos of children, or database passwords in Git. Production rollout requires review of access control, data minimization, backups, and guardians' consent for sensitive information and photos.
+## API для мобильного приложения
 
-## Status
-Scaffold / work in progress. Not yet a production-ready app.
+Все запросы: `Authorization: Bearer <token>`.
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| POST | `/api/login` | `{login, password}` → `{token, role, expires_at}` |
+| POST | `/api/logout` | завершить сессию |
+| GET | `/api/catalog` | услуги с фото и специалистами, тарифы (без входа) |
+| GET | `/api/my/profile` | родитель и дети |
+| GET | `/api/my/subscriptions` | абонементы с остатками |
+| GET | `/api/my/visits` | история посещений |
+| POST | `/api/my/qr` | одноразовый QR-код на 2 минуты (`code` кодируется в QR как есть) |
+| POST | `/api/me/password` | смена пароля |
+| GET | `/api/photos/{id}` | фото услуги |
+
+## Безопасность
+
+- Пароли хранятся как scrypt, сессии отзываются при смене/сбросе пароля и отключении.
+- Ограничение попыток входа (10 за 15 минут на логин, 50 на IP).
+- QR-коды одноразовые, живут 2 минуты, в базе хранится только хэш; новый код гасит предыдущий.
+- Каждое изменение баланса — в транзакции с блокировкой строки, с записью в журнал.
+- Строгие заголовки (CSP, запрет фреймов, HSTS на Render).
+- Медицинские данные и фото детей в систему не загружаются.
+
+## Запуск
+
+### Render
+
+`render.yaml` описывает веб-сервис `kinder-spa`, подключённый к существующей базе `kinder-spa-db`.
+Dashboard → **New → Blueprint** → этот репозиторий. При создании укажите `ADMIN_LOGIN` и `ADMIN_PASSWORD`
+первого главного администратора. Таблицы создаются автоматически при первом запуске (схема `kinder`).
+После первого входа эти две переменные можно удалить.
+
+### Локально
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+export DATABASE_URL=postgresql://user:pass@localhost:5432/kinder
+export ADMIN_LOGIN=owner ADMIN_PASSWORD='сложный-пароль'
+uvicorn kinder.app:asgi --factory --reload
+# панель: http://localhost:8000/admin/
+```
+
+### Тесты
+
+```bash
+KINDER_TEST_DATABASE_URL=postgresql://postgres:pass@localhost:5432/postgres python -m pytest -q
+```
+
+Тесты создают временную базу, поднимают настоящий сервер и проверяют API и панель в Chromium (Playwright).
+
+## Дальше
+
+- **Этап 2**: Android-приложение для родителей на этом API (старый прототип — в ветке `feature/android-client`).
+- **Этап 3**: Telegram-бот (напоминания об окончании абонемента, QR в боте).
+- Расписание и запись на время (бассейн: отмена с возвратом до 19:00 предыдущего дня).
+
+Старые экспериментальные ветки сохранены без изменений как архив.

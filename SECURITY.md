@@ -1,8 +1,8 @@
-# Kinder Spa security checklist
+# Безопасность Kinder Spa
 
-- Repository is currently public. Change visibility to private before adding any proprietary material.
-- Never commit admin passwords, database URLs, JWT secrets, photo uploads, or customer data.
-- Parent/guardian accounts only. Do not expose children's medical records in profile or QR payload.
-- Server must validate QR expiration and one-time redemption inside a database transaction.
-- Add brute-force protection, admin password rotation, audit logs and backups before launch.
-- Render free resources are suitable for prototype tests only; paid upgrades require owner approval.
+- Репозиторий публичный: сделайте его приватным перед тем, как добавлять что-либо, кроме кода.
+- Никогда не коммитьте пароли, адреса баз данных, токены ботов, фото и данные клиентов.
+- `ADMIN_PASSWORD` задаётся только в настройках Render и нужен лишь для первого входа.
+- Не храните в заметках медицинские диагнозы детей; фото услуг — без лиц детей.
+- Бэкапы: на платном плане Render включён PITR (3 дня); раз в месяц проверяйте восстановление в тестовую базу.
+- О проблемах безопасности сообщайте владельцу напрямую, не через публичные issues.

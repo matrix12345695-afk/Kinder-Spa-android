@@ -1,12 +1,8 @@
 .env
 .env.*
 !.env.example
-*.db
-*.sqlite*
 __pycache__/
+*.pyc
 .venv/
-.dart_tool/
-build/
+.pytest_cache/
 uploads/
-*.keystore
-*.jks
