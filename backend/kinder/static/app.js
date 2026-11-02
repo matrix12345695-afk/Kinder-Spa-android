@@ -120,7 +120,7 @@ function modal(title, body, { okText = 'Сохранить', onOk, onCancel, dan
 }
 function showSecret(title, login, password, note) {
   modal(title, h('div', { class: 'stack' },
-    h('p', {}, note || 'Передайте эти данные клиенту. Пароль показывается только один раз.'),
+    h('p', {}, note || 'Передайте эти данные клиенту: с ними можно войти в Telegram-бот Kinder Spa и в приложение. Пароль показывается только один раз.'),
     h('div', { class: 'secret mono' }, h('div', {}, 'Логин: ', h('b', {}, login)), h('div', {}, 'Пароль: ', h('b', {}, password))),
   ), { hideOk: true, cancelText: 'Готово' });
 }
@@ -290,6 +290,7 @@ async function pageClient(main, id) {
           h('button', { class: 'btn small', onclick: () => editChild(c.id, k, reload) }, 'Изменить')))) : h('div', { class: 'muted' }, 'Не добавлены')),
       h('div', { class: 'card' }, h('h2', {}, 'Доступ в приложение'),
         c.login ? h('div', { class: 'stack' }, h('div', {}, 'Логин: ', h('b', { class: 'mono' }, c.login), ' ', c.login_enabled ? h('span', { class: 'badge active' }, 'активен') : h('span', { class: 'badge bad' }, 'отключён')),
+          h('div', { class: 'small' }, 'Telegram-бот: ', c.telegram_chats ? h('span', { class: 'badge active' }, 'подключён') : h('span', { class: 'muted' }, 'не подключён (войти можно тем же логином)')),
           h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => issueLogin(c, reload) }, c.login_enabled ? 'Сбросить пароль' : 'Включить с новым паролем'),
             c.login_enabled ? h('button', { class: 'btn danger', onclick: () => disableLogin(c, reload) }, 'Отключить') : null))
           : h('div', { class: 'stack' }, h('div', { class: 'muted' }, 'Логин ещё не выдан'), h('button', { class: 'btn', onclick: () => issueLogin(c, reload), disabled: c.archived }, 'Выдать логин и пароль')))),

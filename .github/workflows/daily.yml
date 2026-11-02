@@ -1,0 +1,21 @@
+name: daily-reminders
+
+# Every morning at 08:17 Tashkent (03:17 UTC): parent reminders + staff digest in Telegram.
+# Free alternative to a paid Render cron job. The endpoint is idempotent per day and accepts
+# calls without a secret between 08:00 and 11:00 Tashkent; KINDER_CRON_SECRET is optional.
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake service and run daily job
+        env:
+          SECRET: ${{ secrets.KINDER_CRON_SECRET }}
+        run: |
+          curl -fsS --retry 5 --retry-delay 20 --retry-all-errors --max-time 120 -o /dev/null https://kinder-spa.onrender.com/health || true
+          curl -fsS --retry 3 --retry-delay 15 --retry-all-errors --max-time 120 \
+            -X POST -H "X-Cron-Secret: $SECRET" https://kinder-spa.onrender.com/api/cron/daily

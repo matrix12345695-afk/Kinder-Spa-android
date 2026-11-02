@@ -8,8 +8,8 @@ and close(). Only positional %s placeholders are used in this codebase.
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_DIR = Path(__file__).with_name('schema.sql')
-MIGRATIONS = [SCHEMA_DIR]  # append new files for future versions
+HERE = Path(__file__).parent
+MIGRATIONS = [HERE / 'schema.sql', HERE / 'schema_002_telegram.sql']  # append new files, never edit applied ones
 
 
 def psycopg_connect(url):

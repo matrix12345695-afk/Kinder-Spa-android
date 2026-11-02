@@ -93,13 +93,74 @@ class Client:
         return self
 
 
+class FakeTelegram:
+    """Records Bot API calls; answers like api.telegram.org."""
+    def __init__(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        self.calls, self.blocked, self.lock, self.msg_id = [], set(), threading.Lock(), 100
+        fake = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                method = self.path.rsplit('/', 1)[-1]
+                raw = self.rfile.read(int(self.headers.get('content-length', 0)))
+                ctype = self.headers.get('content-type', '')
+                payload = json.loads(raw) if ctype.startswith('application/json') else {'_multipart': raw}
+                if '_multipart' in payload:
+                    import re
+                    m = re.search(rb'name="chat_id"\r\n\r\n(-?\d+)', raw)
+                    payload['chat_id'] = int(m.group(1)) if m else None
+                with fake.lock:
+                    fake.calls.append((method, payload))
+                    fake.msg_id += 1
+                    mid = fake.msg_id
+                if payload.get('chat_id') in fake.blocked:
+                    body, code = {'ok': False, 'error_code': 403, 'description': 'Forbidden: bot was blocked by the user'}, 403
+                else:
+                    body, code = {'ok': True, 'result': {'message_id': mid} if method.startswith('send') else True}, 200
+                data = json.dumps(body).encode()
+                self.send_response(code)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+        self.httpd = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.url = f'http://127.0.0.1:{self.httpd.server_address[1]}'
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def take(self, method=None, chat_id=None):
+        with self.lock:
+            return [p for m, p in self.calls if (method is None or m == method) and (chat_id is None or p.get('chat_id') == chat_id)]
+
+    def wait(self, method, chat_id=None, contains=None, timeout=5.0):
+        end = time.time() + timeout
+        while time.time() < end:
+            for p in self.take(method, chat_id):
+                if contains is None or contains in p.get('text', '') or contains.encode() in p.get('_multipart', b''):
+                    return p
+            time.sleep(0.05)
+        raise AssertionError(f'no {method} to {chat_id} containing {contains!r}; got {self.take(None, chat_id)[-5:]}')
+
+
 @pytest.fixture(scope='session')
-def server(database_url):
+def fake_telegram():
+    return FakeTelegram()
+
+
+@pytest.fixture(scope='session')
+def server(database_url, fake_telegram):
     import uvicorn
     from kinder import app as appmod
+    from kinder.telegram import TelegramAPI
     os.environ['ADMIN_LOGIN'] = 'owner'
     os.environ['ADMIN_PASSWORD'] = 'owner-pass-123'
-    application = appmod.create_app(database_url, connect=CONNECT)
+    os.environ['PUBLIC_URL'] = 'https://kinder.test'
+    os.environ['CRON_SECRET'] = 'cron-secret-for-tests'
+    application = appmod.create_app(database_url, connect=CONNECT,
+                                    telegram_api=TelegramAPI('123:TEST', base=fake_telegram.url))
     port = free_port()
     config = uvicorn.Config(application, host='127.0.0.1', port=port, log_level='warning', lifespan='on')
     srv = uvicorn.Server(config)

@@ -1,5 +1,6 @@
 """Kinder Spa HTTP API and admin panel host (Starlette)."""
 import base64
+import hmac
 import binascii
 import json
 import logging
@@ -12,6 +13,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import FileResponse, RedirectResponse, Response
@@ -19,6 +21,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import security as sec
+from . import telegram as tgbot
 from .db import Database, sqlstate
 
 log = logging.getLogger('kinder')
@@ -55,9 +58,9 @@ def _default(value):
     raise TypeError(type(value).__name__)
 
 
-def json_response(data, status=200, headers=None):
+def json_response(data, status=200, headers=None, background=None):
     body = json.dumps(data, default=_default, ensure_ascii=False).encode('utf-8')
-    return Response(body, status, headers=headers, media_type='application/json')
+    return Response(body, status, headers=headers, media_type='application/json', background=background)
 
 
 class Ctx:
@@ -65,6 +68,12 @@ class Ctx:
         self.request, self.body, self.user, self.c = request, body, user, conn
         self.params = request.path_params
         self.query = request.query_params
+        self.notify = False
+
+    def notify_client(self, client_id, text):
+        """Queue a Telegram message to the parent's linked chats (inside the current transaction)."""
+        if getattr(self.request.app.state, 'tg', None) and tgbot.enqueue_for_client(self.c, client_id, text):
+            self.notify = True
 
     def audit(self, action, entity, entity_id=None, **details):
         self.c.execute('INSERT INTO audit_log(actor_id, action, entity, entity_id, details) VALUES (%s,%s,%s,%s,%s::jsonb)',
@@ -108,9 +117,10 @@ def api(path, methods=('GET',), roles=STAFF):
                             raise ApiError(401, 'unauthorized')
                         if user['role'] not in roles:
                             raise ApiError(403, 'forbidden')
-                    return fn(Ctx(request, body, user, c))
+                    ctx = Ctx(request, body, user, c)
+                    return fn(ctx), ctx.notify
             try:
-                result = await run_in_threadpool(run)
+                result, notify = await run_in_threadpool(run)
             except ApiError as e:
                 payload = {'error': e.code}
                 if e.detail:
@@ -128,7 +138,9 @@ def api(path, methods=('GET',), roles=STAFF):
                 return json_response({'error': 'internal_error'}, 500)
             if isinstance(result, Response):
                 return result
-            return json_response(result)
+            app_state = request.app.state
+            background = BackgroundTask(tgbot.flush_outbox, app_state.db, app_state.tg) if notify and app_state.tg else None
+            return json_response(result, background=background)
         ROUTES.append(Route('/api' + path, endpoint, methods=list(methods)))
         return fn
     return wrap
@@ -392,6 +404,7 @@ def client_payload(x, cid):
     client['children'] = x.all('SELECT id, full_name, birth_date, note, archived FROM children WHERE client_id=%s ORDER BY archived, id', (cid,))
     client['subscriptions'] = subscriptions_for(x, 's.client_id=%s', (cid,))
     client['visits'] = visits_query(x, 'sub.client_id=%s', (cid,), limit=100)
+    client['telegram_chats'] = len(tgbot.client_chats(x.c, cid)) if client['user_id'] else 0
     return client
 
 
@@ -789,6 +802,8 @@ def subscription_create(x):
             x.c.execute('INSERT INTO subscription_items VALUES (%s,%s,%s,%s)', (row['id'], sid, visits, visits))
         x.audit('create_subscription', 'subscription', row['id'], client_id=cid, child_id=child_id,
                 plan_id=plan_id, name=name, price=price, starts_on=starts, ends_on=ends, items=items)
+        x.notify_client(cid, f"🎉 Оформлен абонемент <b>{tgbot.e(name)}</b>\n"
+                        f"Действует с {starts.strftime('%d.%m.%Y')} по {ends.strftime('%d.%m.%Y')}.")
     return {'id': row['id']}
 
 
@@ -816,6 +831,7 @@ def subscription_freeze(x):
             raise ApiError(409, 'expired')
         x.c.execute("UPDATE subscriptions SET status='frozen', frozen_since=%s WHERE id=%s", (today(), s['id']))
         x.audit('freeze', 'subscription', s['id'], reason=why)
+        x.notify_client(s['client_id'], f"❄️ Абонемент <b>{tgbot.e(s['name'])}</b> заморожен. Срок продлится на дни заморозки.")
     return {'ok': True}
 
 
@@ -829,6 +845,7 @@ def subscription_unfreeze(x):
         ends = s['ends_on'] + timedelta(days=days)
         x.c.execute("UPDATE subscriptions SET status='active', frozen_since=NULL, ends_on=%s WHERE id=%s", (ends, s['id']))
         x.audit('unfreeze', 'subscription', s['id'], frozen_days=days, ends_on=ends)
+        x.notify_client(s['client_id'], f"▶️ Абонемент <b>{tgbot.e(s['name'])}</b> снова активен, действует до {ends.strftime('%d.%m.%Y')}.")
     return {'ok': True, 'frozen_days': days, 'ends_on': ends}
 
 
@@ -843,6 +860,7 @@ def subscription_extend(x):
         ends = s['ends_on'] + timedelta(days=days)
         x.c.execute('UPDATE subscriptions SET ends_on=%s WHERE id=%s', (ends, s['id']))
         x.audit('extend', 'subscription', s['id'], days=days, ends_on=ends, reason=why)
+        x.notify_client(s['client_id'], f"📅 Абонемент <b>{tgbot.e(s['name'])}</b> продлён до {ends.strftime('%d.%m.%Y')}.")
     return {'ok': True, 'ends_on': ends}
 
 
@@ -913,6 +931,10 @@ def redeem(x, sub, service_id, child_id, specialist_id, method, force=False):
         child_id = sub['child_id']
     elif child_id and not x.one('SELECT 1 FROM children WHERE id=%s AND client_id=%s AND NOT archived', (child_id, sub['client_id'])):
         raise ApiError(400, 'child_not_of_client')
+    elif not child_id:
+        kids = x.all('SELECT id FROM children WHERE client_id=%s AND NOT archived', (sub['client_id'],))
+        if len(kids) == 1:  # the only child of the family
+            child_id = kids[0]['id']
     if specialist_id and not x.one('SELECT 1 FROM specialists WHERE id=%s AND active', (specialist_id,)):
         raise ApiError(400, 'specialist_not_found')
     item = x.one('SELECT remaining FROM subscription_items WHERE subscription_id=%s AND service_id=%s FOR UPDATE',
@@ -933,6 +955,14 @@ def redeem(x, sub, service_id, child_id, specialist_id, method, force=False):
         VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id''', (sub['id'], service_id, child_id, specialist_id, method, now(), x.user['id']))
     x.audit('visit', 'subscription', sub['id'], visit_id=visit['id'], service_id=service_id, child_id=child_id,
             specialist_id=specialist_id, method=method, remaining=item['remaining'] - 1)
+    names = x.one('''SELECT sv.name_ru AS service, si.quota, ch.full_name AS child FROM subscription_items si
+        JOIN services sv ON sv.id=si.service_id LEFT JOIN children ch ON ch.id=%s
+        WHERE si.subscription_id=%s AND si.service_id=%s''', (child_id, sub['id'], service_id))
+    left = item['remaining'] - 1
+    who = f" ({tgbot.e(names['child'])})" if names['child'] else ''
+    tail = '\n⚠️ Это было последнее посещение по этой услуге.' if left == 0 else ('\nОсталось одно посещение.' if left == 1 else '')
+    x.notify_client(sub['client_id'], f"✅ Посещение отмечено: <b>{tgbot.e(names['service'])}</b>{who}\n"
+                    f"Осталось: <b>{left}</b> из {names['quota']} · абонемент до {sub['ends_on'].strftime('%d.%m.%Y')}{tail}")
     return {'visit_id': visit['id'], 'remaining': item['remaining'] - 1}
 
 
@@ -976,6 +1006,9 @@ def visit_cancel(x):
         x.c.execute('''UPDATE subscription_items SET remaining=remaining+1, quota=greatest(quota, remaining+1)
             WHERE subscription_id=%s AND service_id=%s''', (sub['id'], v['service_id']))
         x.audit('cancel_visit', 'subscription', sub['id'], visit_id=vid, service_id=v['service_id'], reason=why)
+        svc = x.one('SELECT name_ru FROM services WHERE id=%s', (v['service_id'],))['name_ru']
+        x.notify_client(sub['client_id'], f"↩️ Посещение «{tgbot.e(svc)}» от {v['visited_at'].astimezone(ZONE).strftime('%d.%m %H:%M')} "
+                        'отменено, оно возвращено на абонемент.')
     return {'ok': True}
 
 
@@ -1123,6 +1156,38 @@ async def health(request):
         return json_response({'status': 'degraded', 'database': 'unavailable'}, 503)
 
 
+async def telegram_webhook(request):
+    st = request.app.state
+    if not st.tg:
+        return Response(status_code=404)
+    if not hmac.compare_digest(request.headers.get('x-telegram-bot-api-secret-token', ''), tgbot.webhook_secret(st.tg.token)):
+        return Response(status_code=403)
+    try:
+        update = json.loads(await request.body())
+    except ValueError:
+        return json_response({'ok': True})
+    try:
+        await run_in_threadpool(tgbot.handle_update, st.db, st.tg, update, st.public_url)
+    except Exception:  # never make Telegram retry a poisoned update forever
+        log.exception('telegram update failed')
+    return json_response({'ok': True}, background=BackgroundTask(tgbot.flush_outbox, st.db, st.tg))
+
+
+async def cron_daily(request):
+    st = request.app.state
+    secret = os.environ.get('CRON_SECRET', '')
+    authorized = bool(secret) and hmac.compare_digest(request.headers.get('x-cron-secret', ''), secret)
+    # The job is idempotent per day, so it may also be triggered without a secret in the morning window
+    # (used by the free GitHub Actions schedule). Outside the window a secret is required.
+    hour = now().astimezone(ZONE).hour
+    if not authorized and not 8 <= hour < 11:
+        return Response(status_code=404)
+    if not st.tg:
+        return json_response({'telegram': 'disabled'})
+    result = await run_in_threadpool(tgbot.daily, st.db, st.tg)
+    return json_response(result)
+
+
 async def admin_index(request):
     return FileResponse(STATIC / 'index.html', headers={'Cache-Control': 'no-cache'})
 
@@ -1175,11 +1240,14 @@ def bootstrap_superadmin(db, login_name, password, full_name='Администр
         return True
 
 
-def create_app(database_url=None, connect=None, migrate=True):
+def create_app(database_url=None, connect=None, migrate=True, telegram_api=None):
     url = database_url or os.environ.get('DATABASE_URL') or os.environ.get('KINDER_DATABASE_URL')
     if not url:
         raise SystemExit('DATABASE_URL is not set')
     db = Database(url, connect)
+    token = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
+    tg = telegram_api or (tgbot.TelegramAPI(token) if token else None)
+    public_url = (os.environ.get('PUBLIC_URL') or os.environ.get('RENDER_EXTERNAL_URL') or '').rstrip('/')
 
     @asynccontextmanager
     async def lifespan(app):
@@ -1189,6 +1257,12 @@ def create_app(database_url=None, connect=None, migrate=True):
     async def startup():
         if migrate:
             await run_in_threadpool(db.migrate)
+        if tg and public_url:
+            try:
+                url = await run_in_threadpool(tgbot.setup_webhook, tg, public_url)
+                log.warning('telegram webhook set: %s', url)
+            except tgbot.TelegramError as err:
+                log.error('telegram webhook setup failed: %s', err)
         login_name, password = os.environ.get('ADMIN_LOGIN'), os.environ.get('ADMIN_PASSWORD')
         if login_name and password:
             created = await run_in_threadpool(bootstrap_superadmin, db, login_name, password)
@@ -1196,9 +1270,13 @@ def create_app(database_url=None, connect=None, migrate=True):
 
     routes = [Route('/health', health), Route('/', lambda r: RedirectResponse('/admin/')),
               Route('/admin', lambda r: RedirectResponse('/admin/')), Route('/admin/', admin_index),
-              Mount('/admin/static', StaticFiles(directory=STATIC), name='static')] + ROUTES
+              Mount('/admin/static', StaticFiles(directory=STATIC), name='static'),
+              Route('/telegram/webhook', telegram_webhook, methods=['POST']),
+              Route('/api/cron/daily', cron_daily, methods=['POST'])] + ROUTES
     app = Starlette(routes=routes, lifespan=lifespan)
     app.state.db = db
+    app.state.tg = tg
+    app.state.public_url = public_url
     wrapped = SecurityHeaders(app)
     wrapped.state = app.state
     return wrapped
