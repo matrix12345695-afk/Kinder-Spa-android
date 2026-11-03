@@ -139,9 +139,9 @@ def render(data, lang, public_url):
 <meta property="og:title" content="{e(T["title"])}">
 <meta property="og:description" content="{e(T["meta"])}">
 {f'<meta property="og:image" content="{e(og)}">' if og else ''}
-<meta name="theme-color" content="#C8102E">
+<meta name="theme-color" content="#FF8A80">
 <link rel="icon" href="/admin/static/icon.svg" type="image/svg+xml">
-<link rel="preload" href="/assets/fonts/Unbounded.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="/assets/fonts/Nunito.ttf" as="font" type="font/ttf" crossorigin>
 <link rel="stylesheet" href="/assets/site.css">
 </head>
 <body>
@@ -182,7 +182,7 @@ def render(data, lang, public_url):
       <h2 id="c-h">{T["contacts"]}</h2>
       <dl>{"".join(contacts)}</dl>
     </div>
-    <div class="cta">{"".join(cta).replace("btn-primary", "btn-light").replace("btn-ghost", "btn-outline-light")}</div>
+    <div class="cta">{"".join(cta)}</div>
   </div>
 </section>
 </main>

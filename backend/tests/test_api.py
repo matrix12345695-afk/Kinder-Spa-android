@@ -307,6 +307,6 @@ def test_public_site_and_settings(owner, anon, server):
         html = body.decode()
         assert status == 200 and all(w in html for w in words), (lang, [w for w in words if w not in html])
     assert anon.call('GET', '/assets/site.css', raw=True)[0] == 200
-    status, _, headers = anon.call('GET', '/assets/fonts/Unbounded.ttf', raw=True)
+    status, _, headers = anon.call('GET', '/assets/fonts/Nunito.ttf', raw=True)
     assert status == 200 and 'max-age' in headers['cache-control']
     assert anon.call('GET', '/assets/img/welcome-ru.png', raw=True)[0] == 200
