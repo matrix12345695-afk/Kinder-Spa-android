@@ -1,8 +1,8 @@
 name: daily-reminders
 
 # Every morning at 08:17 Tashkent (03:17 UTC): parent reminders + staff digest in Telegram.
-# Free alternative to a paid Render cron job. The endpoint is idempotent per day and accepts
-# calls without a secret between 08:00 and 11:00 Tashkent; KINDER_CRON_SECRET is optional.
+# GitHub often starts it hours late; the service also runs the job itself once it is awake.
+# The endpoint is idempotent per day and accepts calls without a secret 08:00-21:00 Tashkent.
 on:
   schedule:
     - cron: '17 3 * * *'

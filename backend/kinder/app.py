@@ -1,4 +1,5 @@
 """Kinder Spa HTTP API and admin panel host (Starlette)."""
+import asyncio
 import base64
 import hmac
 import binascii
@@ -6,6 +7,7 @@ import json
 import logging
 import os
 import re
+import urllib.request
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -1320,14 +1322,35 @@ async def telegram_webhook(request):
     return json_response({'ok': True}, background=BackgroundTask(tgbot.flush_outbox, st.db, st.tg))
 
 
+def working_hours():
+    return 8 <= now().astimezone(ZONE).hour < 21
+
+
+async def background(db, tg, public_url, interval=600):
+    """While the free Render instance is up: run the daily job once per day as soon as it is
+    working hours, and ping our own public URL so Render does not put the service to sleep.
+    Outside working hours it does nothing and the instance is allowed to sleep."""
+    done_on = None
+    while True:
+        try:
+            if working_hours():
+                if tg and done_on != today():
+                    log.warning('daily job: %s', await run_in_threadpool(tgbot.daily, db, tg))
+                    done_on = today()
+                if public_url:
+                    await run_in_threadpool(lambda: urllib.request.urlopen(public_url + '/health', timeout=30).read())
+        except Exception:  # keep the loop alive; the next tick retries
+            log.exception('background tick failed')
+        await asyncio.sleep(interval)
+
+
 async def cron_daily(request):
     st = request.app.state
     secret = os.environ.get('CRON_SECRET', '')
     authorized = bool(secret) and hmac.compare_digest(request.headers.get('x-cron-secret', ''), secret)
-    # The job is idempotent per day, so it may also be triggered without a secret in the morning window
-    # (used by the free GitHub Actions schedule). Outside the window a secret is required.
-    hour = now().astimezone(ZONE).hour
-    if not authorized and not 8 <= hour < 11:
+    # The job is idempotent per day, so it may be triggered without a secret during working hours
+    # (GitHub Actions runs its schedule hours late). Outside them a secret is required.
+    if not authorized and not working_hours():
         return Response(status_code=404)
     if not st.tg:
         return json_response({'telegram': 'disabled'})
@@ -1411,7 +1434,11 @@ def create_app(database_url=None, connect=None, migrate=True, telegram_api=None)
     @asynccontextmanager
     async def lifespan(starlette_app):
         await startup()
+        # Only on Render: tests drive the clock and call the daily job themselves.
+        task = asyncio.create_task(background(db, tg, public_url)) if os.environ.get('RENDER') else None
         yield
+        if task:
+            task.cancel()
 
     async def startup():
         if migrate:

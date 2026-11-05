@@ -322,3 +322,24 @@ def test_uzbek_language(owner, chat, fake_telegram, clock):
     chat.press('lang:ru')
     chat.send('🎫 Мои абонементы')
     assert 'Бассейн: <b>7</b> из 8' in chat.last()['text']
+
+
+def test_background_runs_daily_once_per_day_in_working_hours(monkeypatch, clock):
+    import asyncio
+    from kinder import app as appmod
+    calls = []
+    monkeypatch.setattr(appmod.tgbot, 'daily', lambda db, tg: calls.append(appmod.today()) or {})
+    ticks = iter([datetime(2026, 11, 20, 2, 0), datetime(2026, 11, 20, 9, 0), datetime(2026, 11, 20, 12, 0),
+                  datetime(2026, 11, 21, 8, 30)])
+
+    async def sleep(_):
+        try:
+            clock(next(ticks).replace(tzinfo=appmod.ZONE))
+        except StopIteration:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(appmod.asyncio, 'sleep', sleep)
+    clock(datetime(2026, 11, 19, 23, 0, tzinfo=appmod.ZONE))
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(appmod.background(None, object(), ''))
+    assert [str(d) for d in calls] == ['2026-11-20', '2026-11-21']
