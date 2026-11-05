@@ -1198,7 +1198,7 @@ def my_qr(x):
     token = sec.new_token()
     expires = now() + timedelta(seconds=sec.QR_SECONDS)
     with x.c.transaction():
-        x.c.execute('UPDATE qr_tokens SET expires_at=least(expires_at, now()) WHERE client_id=%s AND used_at IS NULL', (cl['id'],))
+        x.c.execute('UPDATE qr_tokens SET expires_at=least(expires_at, %s) WHERE client_id=%s AND used_at IS NULL', (now(), cl['id']))
         x.c.execute('DELETE FROM qr_tokens WHERE expires_at < now() - interval \'30 days\'')
         x.c.execute('INSERT INTO qr_tokens(token_hash, client_id, expires_at) VALUES (%s,%s,%s)', (sec.token_hash(token), cl['id'], expires))
     return {'code': QR_PREFIX + token, 'expires_at': expires, 'ttl_seconds': sec.QR_SECONDS}
@@ -1401,6 +1401,8 @@ class SecurityHeaders:
                     headers.append((b'cache-control', b'no-store'))
                 elif scope['path'].startswith(('/assets/fonts/', '/assets/img/')) and b'cache-control' not in names:
                     headers.append((b'cache-control', b'public, max-age=604800'))
+                elif b'cache-control' not in names:  # js/css: revalidate by ETag so a deploy reaches staff at once
+                    headers.append((b'cache-control', b'no-cache'))
                 message['headers'] = headers
             await send(message)
         await self.app(scope, receive, wrapped)

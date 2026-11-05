@@ -512,7 +512,7 @@ def _client_action(c, tg, chat_id, user, button, command, public_url, lang):
     if command == '/qr' or button == 'btn_qr':
         token = sec.new_token()
         with c.transaction():
-            c.execute('UPDATE qr_tokens SET expires_at=least(expires_at, now()) WHERE client_id=%s AND used_at IS NULL', (client['id'],))
+            c.execute('UPDATE qr_tokens SET expires_at=least(expires_at, %s) WHERE client_id=%s AND used_at IS NULL', (A.now(), client['id']))
             c.execute('INSERT INTO qr_tokens(token_hash, client_id, expires_at) VALUES (%s,%s,%s)',
                       (sec.token_hash(token), client['id'], A.now() + timedelta(seconds=sec.QR_SECONDS)))
         tg.send_photo_bytes(chat_id, qr_png(A.QR_PREFIX + token), caption=t(lang, 'qr_caption'),

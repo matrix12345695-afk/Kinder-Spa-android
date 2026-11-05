@@ -132,7 +132,7 @@ section { padding-block: clamp(56px, 8vw, 96px); }
 
 @media (max-width: 900px) {
   .hero { grid-template-columns: 1fr; }
-  .hero-art { justify-self: center; width: min(360px, 90%); order: -1; }
+  .hero-art { justify-self: center; width: min(260px, 70%); }  /* below the text: headline and CTA stay on the first screen */
   .svcs, .steps { grid-template-columns: 1fr; }
   .svc-media img, .svc-art { aspect-ratio: 16 / 9; }
   .top-nav a:not(.lang) { display: none; }

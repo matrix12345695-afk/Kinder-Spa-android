@@ -241,8 +241,10 @@ async function start() {
 
 /* ------------------------------------------------------------- pages: today */
 async function pageToday(main) {
-  const [rep, expiring, visits] = await Promise.all([
-    api('GET', `/reports?from=${todayISO()}&to=${todayISO()}`), api('GET', '/subscriptions?state=expiring'), api('GET', '/visits')]);
+  const [rep, expiring, visits, slots] = await Promise.all([
+    api('GET', `/reports?from=${todayISO()}&to=${todayISO()}`), api('GET', '/subscriptions?state=expiring'), api('GET', '/visits'),
+    api('GET', `/slots?from=${todayISO()}&to=${todayISO()}`)]);
+  const booked = slots.filter((s) => !s.cancelled_at && s.bookings.some((b) => b.status !== 'cancelled'));
   const cashToday = rep.received.total;
   const t = rep.totals;
   main.replaceChildren(
@@ -252,6 +254,11 @@ async function pageToday(main) {
     h('div', { class: 'grid stats' },
       stat(t.visits_today, 'посещений сегодня'), stat(t.active_subscriptions, 'активных абонементов'),
       stat(fmtMoney(cashToday), 'касса сегодня'), stat(fmtMoney(rep.debt_total), 'долг клиентов'), stat(t.clients, 'клиентов')),
+    h('div', { class: 'card stack' }, h('h2', {}, 'Записи на сегодня'),
+      booked.length ? booked.map((s) => h('div', {}, h('b', {}, fmtTime(s.starts_at), ' ', s.service_name),
+        s.specialist_name ? h('span', { class: 'muted' }, ' · ', s.specialist_name) : null,
+        bookingsTable(s.bookings.filter((b) => b.status !== 'cancelled'), () => go('today'), false)))
+        : h('div', { class: 'empty' }, 'Записей на сегодня нет')),
     h('div', { class: 'grid two' },
       h('div', { class: 'card' }, h('h2', {}, 'Посещения сегодня'), visitsTable(visits, { compact: true, onChange: () => go('today') })),
       h('div', { class: 'card' }, h('h2', {}, 'Заканчиваются (7 дней или ≤1 визит)'), subsTable(expiring))));
