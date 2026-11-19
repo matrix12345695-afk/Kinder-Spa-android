@@ -272,9 +272,10 @@ def login(x):
         else:
             token = sec.new_token()
             hours = sec.SESSION_HOURS[user['role']]
-            expires = now() + timedelta(hours=hours)
-            x.c.execute('INSERT INTO sessions(token_hash, user_id, cred_version, expires_at) VALUES (%s,%s,%s,%s)',
-                        (sec.token_hash(token), user['id'], user['cred_version'], expires))
+            # Expiry by the DB clock, the same clock authenticate() checks it against.
+            expires = x.one('''INSERT INTO sessions(token_hash, user_id, cred_version, expires_at)
+                VALUES (%s,%s,%s, now() + make_interval(hours => %s)) RETURNING expires_at''',
+                            (sec.token_hash(token), user['id'], user['cred_version'], hours))['expires_at']
             x.c.execute('DELETE FROM login_attempts WHERE at < now() - interval \'1 day\'')
     if not ok:
         raise ApiError(401, 'invalid_credentials')
@@ -784,45 +785,62 @@ def subscriptions_list(x):
     return subscriptions_for(x, "s.status <> 'closed' AND s.ends_on >= %s", (today(),))
 
 
+def lock_client_for_sale(x, cid):
+    client = found(x.one('SELECT id, archived FROM clients WHERE id=%s FOR SHARE', (cid,)), 'client_not_found')
+    if client['archived']:
+        raise ApiError(400, 'client_archived')
+
+
+def insert_subscription(x, cid, body, sale_id=None):
+    """Create one subscription from a plan or a custom item list (caller holds the transaction and the client lock)."""
+    child_id = ident(body.get('child_id'), 'child_id', required=False)
+    starts = day(body.get('starts_on'), 'starts_on') or today()
+    if child_id and not x.one('SELECT 1 FROM children WHERE id=%s AND client_id=%s AND NOT archived', (child_id, cid)):
+        raise ApiError(400, 'child_not_of_client')
+    seller_id = ident(body.get('seller_id'), 'seller_id', required=False)
+    if seller_id and not x.one('SELECT 1 FROM specialists WHERE id=%s', (seller_id,)):
+        raise ApiError(404, 'specialist_not_found')
+    plan_id = ident(body.get('plan_id'), 'plan_id', required=False)
+    if plan_id:
+        plan = found(x.one('SELECT * FROM plans WHERE id=%s AND active', (plan_id,)), 'plan_not_found')
+        items = {r['service_id']: r['visits'] for r in x.all('SELECT service_id, visits FROM plan_items WHERE plan_id=%s', (plan_id,))}
+        name, validity, price = plan['name'], plan['validity_days'], plan['price']
+    else:
+        items = parse_items(body.get('items'))
+        name = text(body, 'name', required=True, max_len=200)
+        validity = integer(body.get('validity_days'), 'validity_days', lo=1, hi=730)
+        price = Decimal('0')
+    if body.get('price') not in (None, ''):
+        price = money(body.get('price'), 'price')
+    if not items:
+        raise ApiError(400, 'items_required')
+    ends = starts + timedelta(days=validity - 1)
+    row = x.one('''INSERT INTO subscriptions(client_id, child_id, plan_id, name, price, starts_on, ends_on, created_by, sale_id, seller_id)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id''',
+                (cid, child_id, plan_id, name, price, starts, ends, x.user['id'], sale_id, seller_id))
+    for sid, visits in items.items():
+        x.c.execute('INSERT INTO subscription_items VALUES (%s,%s,%s,%s)', (row['id'], sid, visits, visits))
+    x.audit('create_subscription', 'subscription', row['id'], client_id=cid, child_id=child_id, plan_id=plan_id, name=name,
+            price=price, starts_on=starts, ends_on=ends, items=items, sale_id=sale_id, seller_id=seller_id)
+    return {'id': row['id'], 'name': name, 'price': price, 'starts_on': starts, 'ends_on': ends}
+
+
+def notify_sub_created(x, cid, sub, debt):
+    x.notify_client(cid, 'n_sub_created', name=tgbot.e(sub['name']), start=sub['starts_on'].strftime('%d.%m.%Y'),
+                    end=sub['ends_on'].strftime('%d.%m.%Y'), debt=i18n.both('n_to_pay', sum=i18n.money(debt)) if debt else '')
+
+
 @api('/subscriptions', ('POST',))
 def subscription_create(x):
     cid = ident(x.body.get('client_id'), 'client_id')
-    child_id = ident(x.body.get('child_id'), 'child_id', required=False)
-    starts = day(x.body.get('starts_on'), 'starts_on') or today()
     with x.c.transaction():
-        client = found(x.one('SELECT id, archived FROM clients WHERE id=%s FOR SHARE', (cid,)), 'client_not_found')
-        if client['archived']:
-            raise ApiError(400, 'client_archived')
-        if child_id and not x.one('SELECT 1 FROM children WHERE id=%s AND client_id=%s AND NOT archived', (child_id, cid)):
-            raise ApiError(400, 'child_not_of_client')
-        plan_id = ident(x.body.get('plan_id'), 'plan_id', required=False)
-        if plan_id:
-            plan = found(x.one('SELECT * FROM plans WHERE id=%s AND active', (plan_id,)), 'plan_not_found')
-            items = {r['service_id']: r['visits'] for r in x.all('SELECT service_id, visits FROM plan_items WHERE plan_id=%s', (plan_id,))}
-            name, validity, price = plan['name'], plan['validity_days'], plan['price']
-        else:
-            items = parse_items(x.body.get('items'))
-            name = text(x.body, 'name', required=True, max_len=200)
-            validity = integer(x.body.get('validity_days'), 'validity_days', lo=1, hi=730)
-            price = Decimal('0')
-        if x.body.get('price') not in (None, ''):
-            price = money(x.body.get('price'), 'price')
-        if not items:
-            raise ApiError(400, 'items_required')
-        ends = starts + timedelta(days=validity - 1)
-        row = x.one('''INSERT INTO subscriptions(client_id, child_id, plan_id, name, price, starts_on, ends_on, created_by)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id''', (cid, child_id, plan_id, name, price, starts, ends, x.user['id']))
-        for sid, visits in items.items():
-            x.c.execute('INSERT INTO subscription_items VALUES (%s,%s,%s,%s)', (row['id'], sid, visits, visits))
-        x.audit('create_subscription', 'subscription', row['id'], client_id=cid, child_id=child_id,
-                plan_id=plan_id, name=name, price=price, starts_on=starts, ends_on=ends, items=items)
+        lock_client_for_sale(x, cid)
+        sub = insert_subscription(x, cid, x.body)
         paid_now = money(x.body.get('paid_amount'), 'paid_amount')
         if paid_now:
-            record_payment(x, row['id'], price, Decimal('0'), paid_now, x.body.get('paid_method') or 'cash', '')
-        debt = max(Decimal('0'), price - (paid_now or Decimal('0')))
-        x.notify_client(cid, 'n_sub_created', name=tgbot.e(name), start=starts.strftime('%d.%m.%Y'), end=ends.strftime('%d.%m.%Y'),
-                        debt=i18n.both('n_to_pay', sum=i18n.money(debt)) if debt else '')
-    return {'id': row['id']}
+            record_payment(x, sub['id'], sub['price'], Decimal('0'), paid_now, x.body.get('paid_method') or 'cash', '')
+        notify_sub_created(x, cid, sub, max(Decimal('0'), sub['price'] - (paid_now or Decimal('0'))))
+    return {'id': sub['id']}
 
 
 def lock_subscription(x, sid):
@@ -921,22 +939,27 @@ def subscription_close(x):
 
 # ---------------------------------------------------------------- payments
 
-PAYMENT_METHODS = {'cash': 'наличные', 'card': 'карта', 'click': 'Click', 'payme': 'Payme', 'transfer': 'перевод'}
+PAYMENT_METHODS = {'cash': 'наличные', 'card': 'карта', 'click': 'Click', 'payme': 'Payme', 'transfer': 'перевод', 'qr': 'единый QR'}
 
 
 def fmt_sum(amount):
     return f"{int(amount):,}".replace(',', ' ') + ' сум'
 
 
-def record_payment(x, sid, price, paid_before, amount, method, note):
+def open_shift_id(x):
+    row = x.one('SELECT id FROM cash_shifts WHERE closed_at IS NULL')
+    return row['id'] if row else None
+
+
+def record_payment(x, sid, price, paid_before, amount, method, note, sale_id=None):
     if method not in PAYMENT_METHODS:
         raise ApiError(400, 'invalid_field', 'method')
     if amount is None or amount <= 0:
         raise ApiError(400, 'invalid_field', 'amount')
     if paid_before + amount > price:
         raise ApiError(409, 'overpayment', {'debt': max(Decimal('0'), price - paid_before)})
-    row = x.one('''INSERT INTO payments(subscription_id, amount, method, paid_at, staff_id, note)
-        VALUES (%s,%s,%s,%s,%s,%s) RETURNING id''', (sid, amount, method, now(), x.user['id'], note))
+    row = x.one('''INSERT INTO payments(subscription_id, amount, method, paid_at, staff_id, note, sale_id, shift_id)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id''', (sid, amount, method, now(), x.user['id'], note, sale_id, open_shift_id(x)))
     x.audit('payment', 'subscription', sid, payment_id=row['id'], amount=amount, method=method, note=note)
     return row['id']
 
@@ -1267,6 +1290,10 @@ def reports(x):
         WHERE (created_at AT TIME ZONE 'Asia/Tashkent')::date BETWEEN %s AND %s''', rng)
     sold_by_plan = x.all('''SELECT name, count(*) AS count, coalesce(sum(price),0) AS revenue FROM subscriptions
         WHERE (created_at AT TIME ZONE 'Asia/Tashkent')::date BETWEEN %s AND %s GROUP BY name ORDER BY 2 DESC''', rng)
+    # Seller = the specialist named on the sale, otherwise the staff member who made it.
+    sellers = x.all('''SELECT coalesce(sp.full_name, u.full_name) AS name, count(*) AS count, coalesce(sum(s.price),0) AS revenue
+        FROM subscriptions s LEFT JOIN specialists sp ON sp.id=s.seller_id JOIN users u ON u.id=s.created_by
+        WHERE (s.created_at AT TIME ZONE 'Asia/Tashkent')::date BETWEEN %s AND %s GROUP BY 1 ORDER BY 3 DESC, 1''', rng)
     counts = x.one('''SELECT (SELECT count(*) FROM clients WHERE NOT archived) AS clients,
         (SELECT count(*) FROM subscriptions WHERE status='active' AND ends_on >= %s) AS active_subscriptions,
         (SELECT count(*) FROM subscriptions WHERE status='frozen') AS frozen_subscriptions,
@@ -1280,7 +1307,7 @@ def reports(x):
     debt = x.one('''SELECT coalesce(sum(greatest(s.price - coalesce((SELECT sum(p.amount) FROM payments p
         WHERE p.subscription_id=s.id AND p.voided_at IS NULL), 0), 0)), 0) AS v FROM subscriptions s WHERE s.status <> 'closed' ''')['v']
     return {'from': start, 'to': end, 'totals': counts, 'by_service': by_service, 'by_day': by_day,
-            'by_specialist': by_specialist, 'sold': sold, 'sold_by_plan': sold_by_plan,
+            'by_specialist': by_specialist, 'sold': sold, 'sold_by_plan': sold_by_plan, 'sellers': sellers,
             'received': {'by_method': by_method, 'total': sum(by_method.values())}, 'debt_total': debt}
 
 
@@ -1486,3 +1513,4 @@ def asgi():
 
 from . import schedule  # noqa: E402,F401  (registers schedule routes)
 from . import exports  # noqa: E402,F401  (registers export routes)
+from . import sales  # noqa: E402,F401  (registers sales and cash-shift routes)

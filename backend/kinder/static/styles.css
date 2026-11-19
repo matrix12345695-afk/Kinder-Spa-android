@@ -18,7 +18,7 @@ h3 { font-size: 15px; font-weight: 800; margin: 0 0 8px; }
 :focus-visible { outline: 3px solid var(--coral); outline-offset: 2px; }
 
 /* layout */
-.layout { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+.layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100vh; }
 .sidebar { background: #fff; color: var(--garnet); border-right: 1px solid var(--line); padding: 20px 14px; display: flex; flex-direction: column; gap: 2px;
            position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 .brand { display: flex; align-items: center; gap: 11px; color: var(--garnet); font: 900 18px/1 var(--display); padding: 2px 8px 22px; }
@@ -32,7 +32,7 @@ h3 { font-size: 15px; font-weight: 800; margin: 0 0 8px; }
 .user-box { font-size: 13px; padding: 14px 10px 4px; border-top: 1px dashed var(--line); color: var(--muted); }
 .user-box .name { color: var(--garnet); font-weight: 800; font-size: 14px; }
 .user-box .btn { margin-top: 10px; }
-.main { padding: 28px 32px 64px; max-width: 1240px; width: 100%; }
+.main { padding: 28px 32px 64px; max-width: 1240px; width: 100%; min-width: 0; }
 .topbar { display: none; }
 
 @media (max-width: 860px) {
@@ -161,3 +161,16 @@ tr.cancelled td { color: var(--muted); text-decoration: line-through; }
 details summary { cursor: pointer; color: var(--muted); }
 pre.json { white-space: pre-wrap; font-size: 12px; margin: 0; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+
+/* cash desk */
+.cart-row { align-items: flex-end; flex-wrap: wrap; }
+.card.warn { background: #fff4e5; }
+.receipt { font-size: 14px; line-height: 1.5; }
+.receipt .center { text-align: center; }
+.receipt .r-line { display: flex; justify-content: space-between; gap: 12px; }
+.receipt hr { border: 0; border-top: 1px dashed #b9a7a7; margin: 8px 0; }
+#print-root { display: none; }
+@media print {
+  body > *:not(#print-root) { display: none !important; }
+  #print-root { display: block; width: 72mm; font: 12px/1.4 monospace; color: #000; }
+}

@@ -157,8 +157,8 @@ STATES = {
     'uz': {'active': 'faol', 'frozen': 'muzlatilgan', 'closed': 'yopilgan', 'expired': 'muddati tugagan', 'used_up': 'tugagan', 'not_started': 'hali boshlanmagan'},
 }
 WEEKDAYS = {'ru': ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'], 'uz': ['Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh', 'Ya']}
-METHODS = {'ru': {'cash': 'наличные', 'card': 'карта', 'click': 'Click', 'payme': 'Payme', 'transfer': 'перевод'},
-           'uz': {'cash': 'naqd', 'card': 'karta', 'click': 'Click', 'payme': 'Payme', 'transfer': "o'tkazma"}}
+METHODS = {'ru': {'cash': 'наличные', 'card': 'карта', 'click': 'Click', 'payme': 'Payme', 'transfer': 'перевод', 'qr': 'единый QR'},
+           'uz': {'cash': 'naqd', 'card': 'karta', 'click': 'Click', 'payme': 'Payme', 'transfer': "o'tkazma", 'qr': 'yagona QR'}}
 CURRENCY = {'ru': 'сум', 'uz': "so'm"}
 
 

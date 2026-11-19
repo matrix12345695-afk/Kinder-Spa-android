@@ -29,8 +29,9 @@ const ERRORS = {
   cannot_disable_self: 'Нельзя отключить самого себя', wrong_current_password: 'Текущий пароль неверный',
   password_length: 'Пароль должен быть от 8 символов', invalid_period: 'Некорректный период', busy_retry: 'База занята, повторите',
   internal_error: 'Ошибка сервера', network: 'Нет связи с сервером', specialist_not_found: 'Специалист не найден',
+  shift_already_open: 'Смена уже открыта', no_open_shift: 'Смена не открыта', not_enough_cash: 'В кассе нет столько наличных',
 };
-const METHODS = { cash: 'Наличные', card: 'Карта', click: 'Click', payme: 'Payme', transfer: 'Перевод' };
+const METHODS = { cash: 'Наличные', card: 'Карта', click: 'Click', payme: 'Payme', transfer: 'Перевод', qr: 'Единый QR' };
 const STATES = { active: 'Активен', frozen: 'Заморожен', closed: 'Закрыт', expired: 'Истёк', used_up: 'Использован', not_started: 'Не начался' };
 const ACTIONS = {
   create_client: 'Новый клиент', update_client: 'Изменение клиента', create_child: 'Добавлен ребёнок', update_child: 'Изменение ребёнка',
@@ -42,7 +43,8 @@ const ACTIONS = {
   export: 'Выгрузка отчёта', export_backup: 'Резервная копия', payment: 'Оплата', void_payment: 'Отмена оплаты', telegram_link: 'Вход в Telegram-бот',
   create_slot: 'Новое занятие', generate_slots: 'Создано расписание', update_slot: 'Изменение занятия', cancel_slot: 'Отмена занятия',
   book: 'Запись', cancel_booking: 'Отмена записи', no_show: 'Неявка',
-  update_settings: 'Изменение настроек центра',
+  update_settings: 'Изменение настроек центра', sale: 'Продажа', open_shift: 'Открыта смена', close_shift: 'Закрыта смена',
+  cash_in: 'Внесение в кассу', cash_out: 'Изъятие из кассы',
   create_plan: 'Новый тариф', update_plan: 'Изменение тарифа', bootstrap_superadmin: 'Создан главный администратор',
 };
 
@@ -190,7 +192,7 @@ function renderLogin() {
 }
 
 const PAGES = [
-  ['today', 'Сегодня'], ['scan', 'Сканер QR'], ['clients', 'Клиенты'], ['subscriptions', 'Абонементы'], ['schedule', 'Расписание'], ['visits', 'Посещения'], ['cash', 'Касса'],
+  ['today', 'Сегодня'], ['sale', 'Новая продажа'], ['scan', 'Сканер QR'], ['clients', 'Клиенты'], ['subscriptions', 'Абонементы'], ['schedule', 'Расписание'], ['visits', 'Посещения'], ['cash', 'Касса'], ['shifts', 'Кассовые смены'],
   ['services', 'Услуги'], ['specialists', 'Специалисты'], ['plans', 'Тарифы'], ['reports', 'Отчёты'],
   ['staff', 'Сотрудники', 'superadmin'], ['settings', 'Настройки центра', 'superadmin'], ['audit', 'Журнал'],
 ];
@@ -227,7 +229,7 @@ function go(page, arg) {
   const main = $('#main');
   main.append(h('div', { class: 'muted' }, 'Загрузка…'));
   const render = { today: pageToday, scan: pageScan, clients: pageClients, client: pageClient, subscriptions: pageSubscriptions,
-    visits: pageVisits, cash: pageCash, schedule: pageSchedule, services: pageServices, specialists: pageSpecialists, plans: pagePlans, reports: pageReports, staff: pageStaff, audit: pageAudit, settings: pageSettings }[page] || pageToday;
+    visits: pageVisits, cash: pageCash, sale: pageSale, shifts: pageShifts, schedule: pageSchedule, services: pageServices, specialists: pageSpecialists, plans: pagePlans, reports: pageReports, staff: pageStaff, audit: pageAudit, settings: pageSettings }[page] || pageToday;
   Promise.resolve(render(main, arg)).catch((e) => { main.replaceChildren(h('div', { class: 'card' }, errText(e))); });
 }
 async function start() {
@@ -236,7 +238,7 @@ async function start() {
   const [page, arg] = (location.hash.slice(1) || 'today').split('/');
   if (page === 'client' && arg) {
     state.page = 'clients'; go('client', arg);
-  } else go(PAGES.some((p) => p[0] === page) ? page : 'today');
+  } else go(PAGES.some((p) => p[0] === page) ? page : 'today', page === 'sale' ? arg : undefined);
 }
 
 /* ------------------------------------------------------------- pages: today */
@@ -314,7 +316,8 @@ async function pageClient(main, id) {
   main.replaceChildren(
     h('div', { class: 'row between' }, h('div', {}, h('button', { class: 'btn small', onclick: () => go('clients') }, '← Клиенты'),
       h('h1', {}, c.full_name, ' ', c.archived ? h('span', { class: 'badge bad' }, 'архив') : null)),
-    h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => newSubscription(c, plans, services, reload), disabled: c.archived }, '+ Абонемент'))),
+    h('div', { class: 'row' }, h('button', { class: 'btn accent', onclick: () => go('sale', c.id), disabled: c.archived }, 'Продать'),
+      h('button', { class: 'btn primary', onclick: () => newSubscription(c, plans, services, reload), disabled: c.archived }, '+ Абонемент'))),
     h('div', { class: 'grid two' },
       h('div', { class: 'card' }, h('div', { class: 'row between' }, h('h2', {}, 'Данные'), h('button', { class: 'btn small', onclick: () => editClient(c, reload) }, 'Изменить')),
         h('div', { class: 'stack' }, h('div', {}, h('span', { class: 'muted' }, 'Телефон: '), c.phone || '—'),
@@ -599,7 +602,8 @@ async function pageScan(main) {
     const kids = c.children.filter((k) => !k.archived);
     const subs = c.subscriptions.filter((s) => s.state === 'active');
     result.replaceChildren(h('div', { class: 'card stack' },
-      h('div', { class: 'row between' }, h('h2', {}, c.full_name), h('a', { href: '#client/' + c.id, onclick: (e) => { e.preventDefault(); go('client', c.id); } }, 'Карточка клиента →')),
+      h('div', { class: 'row between' }, h('h2', {}, c.full_name), h('div', { class: 'row' }, h('button', { class: 'btn accent', onclick: () => go('sale', c.id) }, 'Продать'),
+        h('a', { href: '#client/' + c.id, onclick: (e) => { e.preventDefault(); go('client', c.id); } }, 'Карточка клиента →'))),
       kids.length ? h('div', { class: 'muted' }, 'Дети: ', kids.map((k) => k.full_name).join(', ')) : null,
       subs.length ? subs.map((s) => {
         const f = visitForm(s, kids, specialists);
@@ -867,6 +871,7 @@ async function pageReports(main) {
       h('div', { class: 'grid two' },
         h('div', { class: 'card' }, h('h2', {}, 'По услугам'), hbars(r.by_service, 'visits')),
         h('div', { class: 'card' }, h('h2', {}, 'По специалистам'), hbars(r.by_specialist, 'visits')),
+        h('div', { class: 'card' }, h('h2', {}, 'Топ продавцы'), r.sellers.length ? h('table', {}, h('tbody', {}, r.sellers.map((p) => h('tr', {}, h('td', {}, p.name), h('td', { class: 'num' }, p.count, ' шт.'), h('td', { class: 'num' }, fmtMoney(p.revenue)))))) : h('div', { class: 'empty' }, 'Нет продаж')),
         h('div', { class: 'card' }, h('h2', {}, 'По дням'), r.by_day.length ? h('div', { class: 'chart' }, r.by_day.map((d) => { const b = h('div', { title: `${fmtDate(d.day)}: ${d.visits}` }); b.style.height = Math.round(100 * d.visits / maxDay) + '%'; return b; })) : h('div', { class: 'empty' }, 'Нет данных')),
         h('div', { class: 'card' }, h('h2', {}, 'Продажи по тарифам'), r.sold_by_plan.length ? h('table', {}, h('tbody', {}, r.sold_by_plan.map((p) => h('tr', {}, h('td', {}, p.name), h('td', { class: 'num' }, p.count, ' шт.'), h('td', { class: 'num' }, fmtMoney(p.revenue)))))) : h('div', { class: 'empty' }, 'Нет продаж'))));
   };
@@ -940,3 +945,179 @@ window.addEventListener('hashchange', () => {
   else if (PAGES.some((p) => p[0] === page)) go(page);
 });
 if (state.token) start(); else renderLogin();
+
+/* ------------------------------------------------------------- sales (cash desk) */
+async function pageSale(main, clientId) {
+  const [{ plans, specialists }, cur, todays] = await Promise.all([refs(), api('GET', '/shifts/current'), api('GET', '/sales')]);
+  const activePlans = plans.filter((p) => p.active);
+  const sellers = specialists.filter((p) => p.active);
+  let client = clientId ? await api('GET', '/clients/' + clientId) : null;
+  const clientBox = h('div', { class: 'stack' });
+  const cart = h('div', { class: 'stack' });
+  const pays = h('div', { class: 'stack' });
+  const totalEl = h('b', {});
+  const restEl = h('div', { class: 'small muted' });
+  const submit = h('button', { class: 'btn primary', type: 'button' }, 'Оформить продажу');
+  const sum = (sel, root) => [...root.querySelectorAll(sel)].reduce((a, el) => a + (Number(el.value) || 0), 0);
+  const recalc = () => {
+    const total = sum('[data-price]', cart);
+    const amounts = [...pays.querySelectorAll('[data-amount]')];
+    if (amounts.length === 1 && !amounts[0].dataset.touched) amounts[0].value = total;   // one payment covers all until edited
+    const paid = sum('[data-amount]', pays);
+    totalEl.textContent = fmtMoney(total);
+    restEl.textContent = paid > total ? 'Оплата больше суммы продажи' : paid < total ? `В долг: ${fmtMoney(total - paid)}` : 'Оплачено полностью';
+    restEl.className = 'small ' + (paid > total ? 'error-text' : 'muted');
+    submit.disabled = !client || !cart.children.length || paid > total;
+  };
+  const kidOptions = () => [h('option', { value: '' }, 'Вся семья'), ...(client ? client.children.filter((k) => !k.archived).map((k) => h('option', { value: k.id }, k.full_name)) : [])];
+  const addItem = () => {
+    const price = h('input', { type: 'number', min: 0, step: '0.01', 'data-price': '', oninput: recalc });
+    const plan = h('select', { 'data-plan': '', onchange: () => { const p = activePlans.find((x) => String(x.id) === plan.value); price.value = p ? Number(p.price) : 0; recalc(); } },
+      activePlans.map((p) => h('option', { value: p.id }, `${p.name} — ${fmtMoney(p.price)}`)));
+    const row = h('div', { class: 'row cart-row' }, field('Позиция', plan), field('Ребёнок', h('select', { 'data-child': '' }, kidOptions())),
+      field('Продавец', h('select', { 'data-seller': '' }, h('option', { value: '' }, '— ' + (state.me.full_name || state.me.login) + ' —'), sellers.map((p) => h('option', { value: p.id }, p.full_name)))),
+      field('Цена, сум', price), h('button', { class: 'btn small danger', type: 'button', 'aria-label': 'Убрать позицию', onclick: () => { row.remove(); recalc(); } }, '✕'));
+    cart.append(row); plan.dispatchEvent(new Event('change'));
+  };
+  const addPay = () => {
+    const amount = h('input', { type: 'number', min: 0, step: '0.01', 'data-amount': '', oninput: () => { amount.dataset.touched = '1'; recalc(); } });
+    if (pays.children.length) {
+      amount.value = Math.max(0, sum('[data-price]', cart) - sum('[data-amount]', pays));
+      pays.querySelectorAll('[data-amount]').forEach((el) => { el.dataset.touched = '1'; });
+      amount.dataset.touched = '1';
+    }
+    const row = h('div', { class: 'row' }, field('Способ оплаты', h('select', { 'data-method': '' }, Object.entries(METHODS).map(([k, v]) => h('option', { value: k }, v)))),
+      field('Сумма, сум', amount), h('button', { class: 'btn small danger', type: 'button', 'aria-label': 'Убрать оплату', onclick: () => { row.remove(); recalc(); } }, '✕'));
+    pays.append(row); recalc();
+  };
+  const showClientBox = () => {
+    if (client) {
+      const kids = client.children.filter((k) => !k.archived).map((k) => k.full_name).join(', ');
+      clientBox.replaceChildren(h('div', { class: 'row between' }, h('div', {}, h('b', {}, client.full_name), client.phone ? h('span', { class: 'muted' }, ' · ', client.phone) : null,
+        h('div', { class: 'small muted' }, 'Дети: ', kids || '—')),
+        h('button', { class: 'btn small', type: 'button', onclick: () => { client = null; showClientBox(); } }, 'Другой клиент')));
+      cart.querySelectorAll('[data-child]').forEach((sel) => sel.replaceChildren(...kidOptions()));
+      recalc(); return;
+    }
+    const q = h('input', { class: 'search', type: 'search', placeholder: 'Имя родителя или ребёнка, телефон' });
+    const results = h('div', { class: 'stack' });
+    let timer;
+    q.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(async () => {
+      const rows = q.value.trim() ? await api('GET', '/clients?q=' + encodeURIComponent(q.value)) : [];
+      results.replaceChildren(...rows.slice(0, 8).map((r) => h('button', { class: 'btn', type: 'button', onclick: async () => { client = await guard(() => api('GET', '/clients/' + r.id)); showClientBox(); } },
+        r.full_name, r.children ? ` · ${r.children}` : '', r.phone ? ` · ${r.phone}` : '')));
+    }, 250); });
+    clientBox.replaceChildren(h('div', { class: 'row' }, q, h('button', { class: 'btn', type: 'button', onclick: () => go('scan') }, 'Сканировать QR'),
+      h('button', { class: 'btn', type: 'button', onclick: () => newClient() }, '+ Новый клиент')), results);
+    recalc(); q.focus();
+  };
+  submit.addEventListener('click', () => guard(async () => {
+    submit.disabled = true;
+    try {
+      const items = [...cart.querySelectorAll('.cart-row')].map((r) => ({ plan_id: Number(r.querySelector('[data-plan]').value),
+        child_id: Number(r.querySelector('[data-child]').value) || null, seller_id: Number(r.querySelector('[data-seller]').value) || null,
+        price: r.querySelector('[data-price]').value }));
+      const payments = [...pays.children].map((r) => ({ method: r.querySelector('[data-method]').value, amount: r.querySelector('[data-amount]').value }))
+        .filter((p) => Number(p.amount) > 0);
+      const r = await api('POST', '/sales', { client_id: client.id, items, payments });
+      toast(Number(r.debt) > 0 ? `Продажа оформлена, долг ${fmtMoney(r.debt)}` : 'Продажа оформлена');
+      go('sale'); showReceipt(r.id);
+    } finally { recalc(); }
+  }).catch(() => {}));
+  main.replaceChildren(h('div', { class: 'row between' }, h('h1', {}, 'Новая продажа'), h('button', { class: 'btn', onclick: () => go('shifts') }, 'Кассовые смены')),
+    cur.shift ? null : h('div', { class: 'card row between warn' }, h('div', {}, h('b', {}, 'Смена не открыта. '), 'Оплаты не попадут в отчёт смены.'),
+      h('button', { class: 'btn primary', onclick: () => openShift(() => go('sale', client && client.id)) }, 'Открыть смену')),
+    h('div', { class: 'card stack' }, h('h2', {}, '1. Клиент'), clientBox),
+    h('div', { class: 'card stack' }, h('h2', {}, '2. Что продаём'), activePlans.length ? cart : h('div', { class: 'empty' }, 'Нет активных тарифов — добавьте их в разделе «Тарифы»'),
+      h('div', { class: 'row between' }, h('button', { class: 'btn small', type: 'button', onclick: addItem, disabled: !activePlans.length }, '+ позиция'), h('div', {}, 'Итого: ', totalEl))),
+    h('div', { class: 'card stack' }, h('h2', {}, '3. Оплата'), pays,
+      h('div', { class: 'row between' }, h('button', { class: 'btn small', type: 'button', onclick: addPay }, '+ другой способ оплаты'), restEl),
+      h('div', { class: 'row' }, submit)),
+    h('div', { class: 'card' }, h('h2', {}, 'Продажи сегодня'), salesTable(todays)));
+  if (activePlans.length) addItem();
+  addPay();
+  showClientBox();
+}
+function salesTable(rows) {
+  if (!rows.length) return h('div', { class: 'empty' }, 'Продаж пока нет');
+  return h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, '№'), h('th', {}, 'Время'), h('th', {}, 'Клиент'), h('th', {}, 'Что'),
+    h('th', {}, 'Сумма'), h('th', {}, 'Оплачено'), h('th', {}, ''))),
+  h('tbody', {}, rows.map((r) => h('tr', {}, h('td', { class: 'muted' }, r.id), h('td', { class: 'small' }, fmtDateTime(r.created_at)),
+    h('td', {}, h('a', { href: '#client/' + r.client_id, onclick: (e) => { e.preventDefault(); go('client', r.client_id); } }, r.client_name)),
+    h('td', { class: 'small' }, r.items), h('td', { class: 'num' }, fmtMoney(r.total)),
+    h('td', { class: 'num' }, fmtMoney(r.paid), Number(r.paid) < Number(r.total) ? h('div', {}, h('span', { class: 'badge bad' }, 'долг')) : null),
+    h('td', {}, h('button', { class: 'btn small', onclick: () => showReceipt(r.id) }, 'Чек')))))));
+}
+async function showReceipt(id) {
+  const r = await guard(() => api('GET', '/sales/' + id));
+  const line = (a, b, strong) => h('div', { class: 'r-line' }, strong ? h('b', {}, a) : h('span', {}, a), strong ? h('b', {}, b) : h('span', {}, b));
+  const body = h('div', { class: 'receipt' },
+    h('div', { class: 'center' }, h('b', {}, 'Kinder Spa'), r.center.address ? h('div', {}, r.center.address) : null, r.center.phone ? h('div', {}, r.center.phone) : null),
+    h('div', {}, `Продажа №${r.id} · ${fmtDateTime(r.created_at)}`), h('div', {}, 'Клиент: ', r.client_name), h('div', {}, 'Кассир: ', r.staff_name), h('hr'),
+    r.items.map((i) => h('div', {}, line(i.name + (i.child_name ? ` (${i.child_name})` : ''), fmtMoney(i.price)),
+      i.seller_name ? h('div', { class: 'small muted' }, 'Продавец: ', i.seller_name) : null)),
+    h('hr'), line('Итого', fmtMoney(r.total), true),
+    r.payments.map((p) => line(METHODS[p.method] || p.method, fmtMoney(p.amount))),
+    Number(r.debt) > 0 ? line('Долг', fmtMoney(r.debt), true) : null,
+    h('div', { class: 'small center muted' }, 'Не является фискальным чеком'));
+  modal('Чек №' + r.id, body, { okText: 'Печать', cancelText: 'Закрыть', onOk: () => { printNode(body); return true; } });
+}
+function printNode(node) {
+  let root = $('#print-root');
+  if (!root) { root = h('div', { id: 'print-root' }); document.body.append(root); }
+  root.replaceChildren(node.cloneNode(true));
+  window.print();
+}
+
+/* ------------------------------------------------------------- cash shifts */
+function openShift(done) {
+  modal('Открыть смену', h('div', { class: 'stack' }, h('p', { class: 'muted' }, 'Пересчитайте наличные в кассе на начало смены.'),
+    field('Наличные в кассе, сум', h('input', { name: 'opening_cash', type: 'number', min: 0, step: '0.01', value: 0, required: true }))),
+  { okText: 'Открыть', onOk: async (f) => { await api('POST', '/shifts/open', readForm(f)); toast('Смена открыта'); done(); } });
+}
+function cashOp(kind, done) {
+  modal(kind === 'in' ? 'Внесение наличных' : 'Изъятие наличных', h('div', { class: 'stack' },
+    field('Сумма, сум', h('input', { name: 'amount', type: 'number', min: 1, step: '0.01', required: true })),
+    field('Причина *', h('input', { name: 'reason', required: true, minlength: 3, maxlength: 300, placeholder: kind === 'in' ? 'Например, размен' : 'Например, инкассация' }))),
+  { onOk: async (f) => { await api('POST', '/shifts/current/ops', Object.assign({ kind }, readForm(f))); toast('Сохранено'); done(); } });
+}
+function closeShift(sh, done) {
+  modal('Закрыть смену №' + sh.id, h('div', { class: 'stack' },
+    h('p', {}, 'По системе в кассе должно быть ', h('b', {}, fmtMoney(sh.cash_now)), ' наличными. Пересчитайте и введите фактическую сумму.'),
+    field('Посчитано наличных, сум', h('input', { name: 'closing_cash', type: 'number', min: 0, step: '0.01', value: Number(sh.cash_now), required: true })),
+    field('Комментарий', h('input', { name: 'note', maxlength: 500 }))),
+  { okText: 'Закрыть смену', onOk: async (f) => {
+    const r = await api('POST', '/shifts/close', readForm(f));
+    const d = Number(r.difference);
+    toast(d === 0 ? 'Смена закрыта, касса сходится' : `Смена закрыта, ${d > 0 ? 'излишек' : 'недостача'} ${fmtMoney(Math.abs(d))}`, d !== 0);
+    done();
+  } });
+}
+function shiftStats(s) {
+  return h('div', { class: 'grid stats' }, stat(fmtMoney(s.total), 'получено за смену'), stat(s.sales, 'продаж'), stat(fmtMoney(s.cash_now), 'наличных в кассе'),
+    ...Object.entries(METHODS).filter(([k]) => Number(s.by_method[k]) > 0).map(([k, v]) => stat(fmtMoney(s.by_method[k]), v)));
+}
+async function pageShifts(main) {
+  const [cur, hist] = await Promise.all([api('GET', '/shifts/current'), api('GET', '/shifts')]);
+  const reload = () => go('shifts');
+  const sh = cur.shift;
+  const closed = hist.filter((s) => s.closed_at);
+  const ops = (rows) => rows.length ? h('div', { class: 'table-wrap' }, h('table', {}, h('tbody', {}, rows.map((o) => h('tr', {}, h('td', { class: 'small' }, fmtDateTime(o.at)),
+    h('td', {}, o.kind === 'in' ? 'Внесение' : 'Изъятие'), h('td', { class: 'num' }, fmtMoney(o.amount)), h('td', {}, o.reason), h('td', { class: 'small' }, o.staff_name)))))) : null;
+  main.replaceChildren(h('div', { class: 'row between' }, h('h1', {}, 'Кассовые смены'),
+    sh ? h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => cashOp('in', reload) }, 'Внесение'), h('button', { class: 'btn', onclick: () => cashOp('out', reload) }, 'Изъятие'),
+      h('button', { class: 'btn primary', onclick: () => closeShift(sh, reload) }, 'Закрыть смену'))
+      : h('button', { class: 'btn primary', onclick: () => openShift(reload) }, 'Открыть смену')),
+  sh ? h('div', { class: 'card stack' }, h('h2', {}, `Смена №${sh.id} открыта`),
+    h('div', { class: 'muted small' }, fmtDateTime(sh.opened_at), ' · ', sh.opened_by_name, ' · на начало ', fmtMoney(sh.opening_cash)), shiftStats(sh), ops(sh.ops))
+    : h('div', { class: 'card empty' }, 'Смена закрыта. Откройте смену в начале дня: оплаты будут считаться по смене, а в конце дня система сверит наличные.'),
+  h('div', { class: 'card' }, h('h2', {}, 'История смен'), closed.length ? h('div', { class: 'table-wrap' }, h('table', {},
+    h('thead', {}, h('tr', {}, h('th', {}, '№'), h('th', {}, 'Открыта'), h('th', {}, 'Закрыта'), h('th', {}, 'Получено'), h('th', {}, 'Наличные: ожидалось'), h('th', {}, 'Посчитано'), h('th', {}, 'Разница'))),
+    h('tbody', {}, closed.map((s) => h('tr', {}, h('td', { class: 'muted' }, s.id),
+      h('td', { class: 'small' }, fmtDateTime(s.opened_at), h('div', { class: 'muted' }, s.opened_by_name)),
+      h('td', { class: 'small' }, fmtDateTime(s.closed_at), h('div', { class: 'muted' }, s.closed_by_name)),
+      h('td', { class: 'num' }, fmtMoney(s.total)), h('td', { class: 'num' }, fmtMoney(s.expected_cash)), h('td', { class: 'num' }, fmtMoney(s.closing_cash)),
+      h('td', { class: 'num' }, Number(s.difference) === 0 ? h('span', { class: 'badge active' }, 'сходится') : h('span', { class: 'badge bad' }, fmtMoney(s.difference)),
+        s.note ? h('div', { class: 'small muted' }, s.note) : null))))))
+    : h('div', { class: 'empty' }, 'Закрытых смен пока нет')));
+}
